@@ -1,0 +1,178 @@
+[
+  {
+    "image_path": "C:/Users/20559/Desktop/6894ac7d100a1ca54033a58d16669242.jpg",
+    "save_path": "output\\perler_50x50_mard_221.png",
+    "width": 50,
+    "height": 50,
+    "ratio": "1:1 (正方形)",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 22:57"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/7da1e3618e2df32a3c9b5d08eeee489e.jpg",
+    "save_path": "output\\perler_61x61_mard_221.png",
+    "width": 61,
+    "height": 61,
+    "ratio": "1:1 (正方形)",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 22:00"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/86c5ac73291132f9226023c06ae48563.jpg",
+    "save_path": "output\\perler_60x107_mard_221.png",
+    "width": 60,
+    "height": 107,
+    "ratio": "9:16",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:43"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/53e3b4482081b024f3f5da9ed453274a.jpg",
+    "save_path": "output\\perler_75x75_mard_221.png",
+    "width": 75,
+    "height": 75,
+    "ratio": "1:1 (正方形)",
+    "output_size": 1500,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:40"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/7da1e3618e2df32a3c9b5d08eeee489e.jpg",
+    "save_path": "output\\perler_75x75_mard_221.png",
+    "width": 75,
+    "height": 75,
+    "ratio": "1:1 (正方形)",
+    "output_size": 1500,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:40"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/7da1e3618e2df32a3c9b5d08eeee489e.jpg",
+    "save_path": "output\\perler_100x100_mard_221.png",
+    "width": 100,
+    "height": 100,
+    "ratio": "1:1 (正方形)",
+    "output_size": 1500,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:39"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/e923a25b092aa5a7201dac872b4155b6.jpg",
+    "save_path": "output\\perler_256x455_mard_221.png",
+    "width": 256,
+    "height": 455,
+    "ratio": "9:16",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:36"
+  },
+  {
+    "image_path": "E:/桌面/d85e5941-25e5-47f0-840b-62317c2611b2.jpg",
+    "save_path": "output\\perler_256x144_mard_221.png",
+    "width": 256,
+    "height": 144,
+    "ratio": "16:9",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:32"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/59cebd51d4e5abb25eb056db43c8f186.jpg",
+    "save_path": "output\\perler_60x80_mard_221.png",
+    "width": 60,
+    "height": 80,
+    "ratio": "3:4",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:29"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/59cebd51d4e5abb25eb056db43c8f186.jpg",
+    "save_path": "output\\perler_60x50_mard_221.png",
+    "width": 60,
+    "height": 50,
+    "ratio": "原始比例",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:29"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/59cebd51d4e5abb25eb056db43c8f186.jpg",
+    "save_path": "output\\perler_60x50_mard_221.png",
+    "width": 60,
+    "height": 50,
+    "ratio": "原始比例",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-07 15:28"
+  }
+]
