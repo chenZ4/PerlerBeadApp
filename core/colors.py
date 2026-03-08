@@ -241,6 +241,20 @@ class ColorPalette:
             }
         return None
 
+    # core/colors.py - 在 ColorPalette 类末尾添加
+
+    class ColorPalette:
+        # ... 现有代码保持不变 ...
+
+        def _rgb_to_hex(self, rgb):
+            """RGB 转 HEX"""
+            return '#{:02X}{:02X}{:02X}'.format(*rgb)
+
+        @property
+        def hex_codes(self):
+            """动态生成 HEX 颜色码列表"""
+            return [self._rgb_to_hex(rgb) for rgb in self.colors]
+
 PALETTE_OPTIONS = [
     ("基础 8 色", "basic"),
     ("哈马 16 色", "hama_16"),

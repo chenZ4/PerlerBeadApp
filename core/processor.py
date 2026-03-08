@@ -1,7 +1,6 @@
-# core/processor.py
-
+# core/processor.py - 完整修改版
 from PIL import Image, ImageDraw, ImageFont
-from core.colors import get_palette
+from .colors import get_palette
 import os
 
 
@@ -10,7 +9,6 @@ class ImageProcessor:
         self.output_dir = "output"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-
         self._font_cache = {}
 
     def _get_font(self, size, bold=False):
@@ -18,7 +16,7 @@ class ImageProcessor:
         cache_key = f"{size}_{bold}"
         if cache_key not in self._font_cache:
             try:
-                font_name = "msyh.ttc" if bold else "msyh.ttf"  # 微软雅黑
+                font_name = "msyh.ttc" if bold else "msyh.ttf"
                 self._font_cache[cache_key] = ImageFont.truetype(font_name, size)
             except:
                 try:
@@ -30,8 +28,9 @@ class ImageProcessor:
 
     def process_image(self, image_path, grid_w, grid_h, canvas_size=1500,
                       show_grid=True, grid_color=(200, 200, 200), grid_width=1,
-                      palette_name="mard_221", show_color_legend=True):
-        """生成专业拼豆图纸"""
+                      palette_name="mard_221", show_color_legend=True,
+                      show_row_col_labels=True):  # 🔧 新增参数
+        """生成专业拼豆图纸 - 带行列标号"""
         try:
             img = Image.open(image_path).convert("RGB")
             orig_w, orig_h = img.size
@@ -41,7 +40,6 @@ class ImageProcessor:
             new_w = max(1, int(orig_w * scale))
             new_h = max(1, int(orig_h * scale))
 
-            # 调整到目标网格大小（保持比例）
             if grid_w >= grid_h:
                 final_grid_w = grid_w
                 final_grid_h = max(1, int(grid_w * orig_h / orig_w))
@@ -81,24 +79,38 @@ class ImageProcessor:
             draw_width = cell_size * final_grid_w
             draw_height = cell_size * final_grid_h
 
-            # 5. 计算图例区域（平铺满宽度）
+            # 🔧 5. 计算行列标号区域大小
+            label_margin = 0
+            if show_row_col_labels:
+                # 预留标号空间：顶部 + 左侧 + 底部 + 右侧
+                label_margin = 35  # 每边预留 35px
+
+            # 6. 计算图例区域
             legend_height = 0
             if show_color_legend and color_stats:
-                colors_per_row = 10  # 每行显示 10 个颜色
+                colors_per_row = 10
                 legend_rows = (len(color_stats) + colors_per_row - 1) // colors_per_row
-                legend_height = legend_rows * 70 + 80  # 每行 70px + 底部耗材量 80px
+                legend_height = legend_rows * 70 + 80
 
-            total_height = draw_height + legend_height
-            total_width = max(draw_width, 1000)
+            # 🔧 7. 总画布尺寸（包含标号边距）
+            total_width = max(draw_width + label_margin * 2, 1000)
+            total_height = draw_height + label_margin * 2 + legend_height
 
-            # 6. 创建画布
+            # 8. 创建画布
             final_img = Image.new('RGB', (total_width, total_height), (255, 255, 255))
             draw = ImageDraw.Draw(final_img)
 
-            # 7. 绘制网格和颜色
-            start_x = (total_width - draw_width) // 2
-            start_y = 0
+            # 🔧 9. 计算网格起始位置（留出标号空间）
+            start_x = label_margin + (total_width - label_margin * 2 - draw_width) // 2
+            start_y = label_margin
 
+            # 🔧 10. 绘制行列标号
+            if show_row_col_labels:
+                self._draw_row_col_labels(draw, final_grid_w, final_grid_h,
+                                          start_x, start_y, cell_size,
+                                          total_width, total_height, label_margin)
+
+            # 11. 绘制网格和颜色
             for y in range(final_grid_h):
                 for x in range(final_grid_w):
                     x1 = start_x + x * cell_size
@@ -128,13 +140,12 @@ class ImageProcessor:
                         text_color = (255, 255, 255) if brightness < 128 else (0, 0, 0)
                         draw.text((text_x, text_y), code, fill=text_color, font=font)
 
-            # 8. 绘制颜色图例（平铺满宽度，美观设计）
+            # 12. 绘制颜色图例
             if show_color_legend and color_stats:
-                legend_y = draw_height + 30
+                legend_y = draw_height + label_margin * 2 + 30
                 color_items = sorted(color_stats.items(), key=lambda x: x[1]['count'], reverse=True)
 
-                # 计算每个颜色块的宽度（平铺满宽度）
-                usable_width = total_width - 40  # 左右各留 20px 边距
+                usable_width = total_width - 40
                 colors_per_row = min(10, len(color_items))
                 item_width = usable_width // colors_per_row
 
@@ -145,7 +156,6 @@ class ImageProcessor:
                     item_x = 20 + col * item_width
                     item_y = legend_y + row * 70
 
-                    # 颜色块（圆角矩形效果）
                     block_size = min(45, item_width - 15)
                     block_x = item_x + (item_width - block_size) // 2
 
@@ -154,7 +164,6 @@ class ImageProcessor:
                         radius=5, fill=info['rgb'], outline=(200, 200, 200), width=1
                     )
 
-                    # 色号和数量
                     font_small = self._get_font(11)
                     font_normal = self._get_font(13)
 
@@ -163,13 +172,11 @@ class ImageProcessor:
                     draw.text((text_x, item_y + 22), f"{info['count']}颗", fill=(100, 100, 100), font=font_small)
                     draw.text((text_x, item_y + 40), f"{info['name']}", fill=(50, 50, 50), font=font_normal)
 
-                # 9. 底部耗材量显示（居中，美观设计）
+                # 底部耗材量显示
                 footer_y = legend_y + legend_rows * 70 + 20
 
-                # 分隔线
                 draw.line([(100, footer_y), (total_width - 100, footer_y)], fill=(220, 220, 220), width=2)
 
-                # 耗材量文字
                 font_title = self._get_font(24, bold=True)
                 font_count = self._get_font(36, bold=True)
                 font_unit = self._get_font(18)
@@ -178,7 +185,6 @@ class ImageProcessor:
                 count_text = str(total_beads)
                 unit_text = "颗豆子"
 
-                # 计算文字位置（居中）
                 title_bbox = draw.textbbox((0, 0), title_text, font=font_title)
                 title_w = title_bbox[2] - title_bbox[0]
 
@@ -191,14 +197,12 @@ class ImageProcessor:
                 total_text_w = count_w + unit_w + 10
                 start_text_x = (total_width - total_text_w) // 2
 
-                # 绘制文字
                 title_x = (total_width - title_w) // 2
                 draw.text((title_x, footer_y + 10), title_text, fill=(0, 120, 215), font=font_title)
 
                 draw.text((start_text_x, footer_y + 50), count_text, fill=(0, 0, 0), font=font_count)
                 draw.text((start_text_x + count_w + 8, footer_y + 60), unit_text, fill=(100, 100, 100), font=font_unit)
 
-                # 网格信息
                 info_text = f"网格尺寸：{final_grid_w} × {final_grid_h} 颗  |  画布：{total_width} × {total_height} px"
                 info_font = self._get_font(14)
                 info_bbox = draw.textbbox((0, 0), info_text, font=info_font)
@@ -206,7 +210,7 @@ class ImageProcessor:
                 info_x = (total_width - info_w) // 2
                 draw.text((info_x, footer_y + 100), info_text, fill=(120, 120, 120), font=info_font)
 
-            # 10. 保存
+            # 13. 保存
             filename = f"perler_{final_grid_w}x{final_grid_h}_{palette_name}.png"
             save_path = os.path.join(self.output_dir, filename)
             final_img.save(save_path, quality=95)
@@ -218,3 +222,102 @@ class ImageProcessor:
             import traceback
             traceback.print_exc()
             return None, None, {}, 0, 0, 0
+
+    def _draw_row_col_labels(self, draw, grid_w, grid_h, start_x, start_y, cell_size,
+                             total_width, total_height, label_margin):
+        """🔧 绘制行列标号"""
+        font_label = self._get_font(14, bold=True)
+        font_small = self._get_font(11)
+
+        # 背景色
+        label_bg = (240, 248, 255)  # 淡蓝色背景
+        label_border = (200, 210, 220)
+
+        # === 顶部列号 ===
+        for col in range(grid_w):
+            x1 = start_x + col * cell_size
+            x2 = x1 + cell_size
+
+            # 背景
+            draw.rectangle([x1, 0, x2, label_margin], fill=label_bg, outline=label_border)
+
+            # 数字（每 5 格加粗显示）
+            num = col + 1
+            if num % 5 == 0:
+                text_color = (0, 100, 200)
+                font = font_label
+            else:
+                text_color = (80, 80, 80)
+                font = font_small
+
+            bbox = draw.textbbox((0, 0), str(num), font=font)
+            text_w = bbox[2] - bbox[0]
+            text_x = x1 + (cell_size - text_w) // 2
+            draw.text((text_x, 8), str(num), fill=text_color, font=font)
+
+        # === 底部列号 ===
+        bottom_start = start_y + grid_h * cell_size
+        for col in range(grid_w):
+            x1 = start_x + col * cell_size
+            x2 = x1 + cell_size
+
+            draw.rectangle([x1, bottom_start, x2, bottom_start + label_margin],
+                           fill=label_bg, outline=label_border)
+
+            num = col + 1
+            if num % 5 == 0:
+                text_color = (0, 100, 200)
+                font = font_label
+            else:
+                text_color = (80, 80, 80)
+                font = font_small
+
+            bbox = draw.textbbox((0, 0), str(num), font=font)
+            text_w = bbox[2] - bbox[0]
+            text_x = x1 + (cell_size - text_w) // 2
+            draw.text((text_x, bottom_start + 8), str(num), fill=text_color, font=font)
+
+        # === 左侧行号 ===
+        for row in range(grid_h):
+            y1 = start_y + row * cell_size
+            y2 = y1 + cell_size
+
+            draw.rectangle([0, y1, label_margin, y2], fill=label_bg, outline=label_border)
+
+            num = row + 1
+            if num % 5 == 0:
+                text_color = (0, 100, 200)
+                font = font_label
+            else:
+                text_color = (80, 80, 80)
+                font = font_small
+
+            bbox = draw.textbbox((0, 0), str(num), font=font)
+            text_h = bbox[3] - bbox[1]
+            text_y = y1 + (cell_size - text_h) // 2
+            draw.text((8, text_y), str(num), fill=text_color, font=font)
+
+        # === 右侧行号 ===
+        right_start = start_x + grid_w * cell_size
+        for row in range(grid_h):
+            y1 = start_y + row * cell_size
+            y2 = y1 + cell_size
+
+            draw.rectangle([right_start, y1, right_start + label_margin, y2],
+                           fill=label_bg, outline=label_border)
+
+            num = row + 1
+            if num % 5 == 0:
+                text_color = (0, 100, 200)
+                font = font_label
+            else:
+                text_color = (80, 80, 80)
+                font = font_small
+
+            bbox = draw.textbbox((0, 0), str(num), font=font)
+            text_h = bbox[3] - bbox[1]
+            text_y = y1 + (cell_size - text_h) // 2
+            draw.text((right_start + 8, text_y), str(num), fill=text_color, font=font)
+
+        # === 左上角装饰 ===
+        draw.rectangle([0, 0, label_margin, label_margin], fill=(0, 120, 215))

@@ -5,6 +5,70 @@
     "width": 61,
     "height": 50,
     "ratio": "原始比例",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-08 18:40"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/7da1e3618e2df32a3c9b5d08eeee489e.jpg",
+    "save_path": "output\\perler_61x61_mard_221.png",
+    "width": 61,
+    "height": 50,
+    "ratio": "原始比例",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-08 18:40"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/59cebd51d4e5abb25eb056db43c8f186.jpg",
+    "save_path": "output\\perler_60x80_mard_221.png",
+    "width": 60,
+    "height": 50,
+    "ratio": "原始比例",
+    "output_size": 3000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-08 18:37"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/59cebd51d4e5abb25eb056db43c8f186.jpg",
+    "save_path": "output\\perler_60x80_mard_221.png",
+    "width": 60,
+    "height": 50,
+    "ratio": "原始比例",
+    "output_size": 2000,
+    "show_grid": true,
+    "grid_color": [
+      200,
+      200,
+      200
+    ],
+    "palette": "MARD 221 色",
+    "time": "2026-03-08 18:36"
+  },
+  {
+    "image_path": "C:/Users/20559/Desktop/7da1e3618e2df32a3c9b5d08eeee489e.jpg",
+    "save_path": "output\\perler_61x61_mard_221.png",
+    "width": 61,
+    "height": 50,
+    "ratio": "原始比例",
     "output_size": 1500,
     "show_grid": true,
     "grid_color": [

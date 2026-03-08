@@ -12,7 +12,7 @@ import os
 class DesktopUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("拼豆图纸生成器")
+        self.root.title("拼豆图纸")
 
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
@@ -120,7 +120,26 @@ class DesktopUI:
 
         # ===== 4. 画布设置 =====
         self._create_section_title("🖼️ 画布设置")
+        self._create_section_title("🖼️ 画布设置")
 
+        ttk.Label(self.scrollable_frame, text="画布尺寸 (像素):").pack(anchor=tk.W)
+        self.canvas_size_var = tk.StringVar(value="1500")
+        self.combo_canvas_size = ttk.Combobox(self.scrollable_frame, textvariable=self.canvas_size_var,
+                                              values=["1000", "1500", "2000", "2500", "3000"], state="readonly")
+        self.combo_canvas_size.pack(fill=tk.X, pady=5)
+        self.combo_canvas_size.bind("<<ComboboxSelected>>", lambda e: self._trigger_preview())
+
+        # 🔧 新增：行列标号开关
+        self.show_labels_var = tk.BooleanVar(value=True)
+        self.chk_labels = ttk.Checkbutton(self.scrollable_frame, text="显示行列标号",
+                                          variable=self.show_labels_var,
+                                          command=lambda: self._trigger_preview())
+        self.chk_labels.pack(anchor=tk.W, pady=5)
+
+        self.show_grid_var = tk.BooleanVar(value=True)
+        self.chk_grid = ttk.Checkbutton(self.scrollable_frame, text="显示网格线", variable=self.show_grid_var,
+                                        command=lambda: self._trigger_preview())
+        self.chk_grid.pack(anchor=tk.W, pady=5)
         ttk.Label(self.scrollable_frame, text="画布尺寸 (像素):").pack(anchor=tk.W)
         self.canvas_size_var = tk.StringVar(value="1500")
         self.combo_canvas_size = ttk.Combobox(self.scrollable_frame, textvariable=self.canvas_size_var,
