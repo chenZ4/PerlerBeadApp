@@ -1,6 +1,13 @@
-# core/colors.py
+import os
 
 class ColorPalette:
+    def __init__(self, palette_name="basic"):
+        self.palette_name = palette_name
+        self.colors = []
+        self.names = []
+        self.codes = []
+        self.load_palette(palette_name)
+
     def _rgb_to_hex(self, rgb):
         """RGB 转 HEX"""
         return '#{:02X}{:02X}{:02X}'.format(*rgb)
@@ -11,18 +18,7 @@ class ColorPalette:
         return [self._rgb_to_hex(rgb) for rgb in self.colors]
 
     def load_palette(self, palette_name):
-        """拼豆色卡 - 带色号字母"""
-
-    def __init__(self, palette_name="basic"):
-        self.palette_name = palette_name
-        self.colors = []
-        self.names = []
-        self.codes = []
-        self.load_palette(palette_name)
-
-    def load_palette(self, palette_name):
         """加载不同厂商的色卡"""
-
         if palette_name == "basic":
             self.colors = [(0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0),
                            (0, 0, 255), (255, 255, 0), (128, 128, 128), (255, 165, 0)]
@@ -54,7 +50,7 @@ class ColorPalette:
                           "E17", "E18", "E19", "E20", "E21", "E22", "E23", "E24"]
 
         elif palette_name == "mard_221":
-            # MARD 221 色完整色卡（从 CSV 文件加载）
+            # MARD 221 色完整色卡
             self.colors = [
                 # A 组 (26)
                 (250, 245, 205), (252, 254, 214), (252, 255, 146), (247, 236, 92),
@@ -221,15 +217,6 @@ class ColorPalette:
                 self.codes[closest_index],
                 closest_index)
 
-    def _rgb_to_hex(self, rgb):
-        """RGB 转 HEX"""
-        return '#{:02X}{:02X}{:02X}'.format(*rgb)
-
-    @property
-    def hex_codes(self):
-        """动态生成 HEX 颜色码列表"""
-        return [self._rgb_to_hex(rgb) for rgb in self.colors]
-
     def get_color_info(self, index):
         """获取单个颜色的完整信息"""
         if 0 <= index < len(self.colors):
@@ -241,19 +228,6 @@ class ColorPalette:
             }
         return None
 
-    # core/colors.py - 在 ColorPalette 类末尾添加
-
-    class ColorPalette:
-        # ... 现有代码保持不变 ...
-
-        def _rgb_to_hex(self, rgb):
-            """RGB 转 HEX"""
-            return '#{:02X}{:02X}{:02X}'.format(*rgb)
-
-        @property
-        def hex_codes(self):
-            """动态生成 HEX 颜色码列表"""
-            return [self._rgb_to_hex(rgb) for rgb in self.colors]
 
 PALETTE_OPTIONS = [
     ("基础 8 色", "basic"),

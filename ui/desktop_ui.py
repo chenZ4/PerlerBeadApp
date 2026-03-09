@@ -1,601 +1,1009 @@
-# ui/desktop_ui.py
+# ui/desktop_ui.py - 纯 PySide6 版本（色卡横向排列 + 主题切换）
+import os
+import sys
+from pathlib import Path
+from typing import Optional
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSize
+from PySide6.QtGui import QPixmap, QImage, QFont, QColor, QIcon, QPalette
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QFileDialog, QSplitter, QPushButton, QComboBox, QLineEdit,
+    QSpinBox, QCheckBox, QLabel, QProgressBar, QScrollArea,
+    QFrame, QListWidget, QListWidgetItem, QMessageBox,
+    QStatusBar, QColorDialog, QGridLayout
+)
+
 from core.processor import ImageProcessor
 from core.history_manager import HistoryManager
 from core.colors import PALETTE_OPTIONS, get_palette
-import os
+
+# ==================== 主题样式表 ====================
+
+LIGHT_THEME = """
+/* 浅色主题 */
+QMainWindow {
+    background-color: #FFFFFF;
+    color: #000000;
+}
+QFrame {
+    background-color: #FFFFFF;
+    border: 1px solid #E0E0E0;
+    border-radius: 8px;
+}
+QLabel {
+    color: #000000;
+}
+QPushButton {
+    background-color: #0078D4;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    border: none;
+}
+QPushButton:hover {
+    background-color: #0063B1;
+}
+QPushButton:disabled {
+    background-color: #CCCCCC;
+}
+QComboBox, QSpinBox, QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    padding: 6px;
+    color: #000000;
+}
+QComboBox:hover, QSpinBox:hover, QLineEdit:hover {
+    border: 1px solid #0078D4;
+}
+QCheckBox {
+    color: #000000;
+}
+QProgressBar {
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    background-color: #F0F0F0;
+}
+QProgressBar::chunk {
+    background-color: #0078D4;
+    border-radius: 4px;
+}
+QScrollArea {
+    background-color: #FFFFFF;
+    border: none;
+}
+QListWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+}
+QListWidget::item {
+    padding: 8px;
+}
+QListWidget::item:selected {
+    background-color: #0078D4;
+    color: white;
+}
+QStatusBar {
+    background-color: #F5F5F5;
+    color: #000000;
+}
+"""
+
+DARK_THEME = """
+/* 深色主题 */
+QMainWindow {
+    background-color: #202020;
+    color: #FFFFFF;
+}
+QFrame {
+    background-color: #2D2D2D;
+    border: 1px solid #404040;
+    border-radius: 8px;
+}
+QLabel {
+    color: #FFFFFF;
+}
+QPushButton {
+    background-color: #0078D4;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    border: none;
+}
+QPushButton:hover {
+    background-color: #1A8BE0;
+}
+QPushButton:disabled {
+    background-color: #555555;
+}
+QComboBox, QSpinBox, QLineEdit {
+    background-color: #3D3D3D;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 6px;
+    color: #FFFFFF;
+}
+QComboBox:hover, QSpinBox:hover, QLineEdit:hover {
+    border: 1px solid #0078D4;
+}
+QCheckBox {
+    color: #FFFFFF;
+}
+QProgressBar {
+    border: 1px solid #555555;
+    border-radius: 4px;
+    background-color: #3D3D3D;
+}
+QProgressBar::chunk {
+    background-color: #0078D4;
+    border-radius: 4px;
+}
+QScrollArea {
+    background-color: #2D2D2D;
+    border: none;
+}
+QListWidget {
+    background-color: #2D2D2D;
+    border: 1px solid #404040;
+    border-radius: 4px;
+}
+QListWidget::item {
+    padding: 8px;
+    color: #FFFFFF;
+}
+QListWidget::item:selected {
+    background-color: #0078D4;
+    color: white;
+}
+QStatusBar {
+    background-color: #2D2D2D;
+    color: #FFFFFF;
+}
+"""
 
 
-class DesktopUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("拼豆图纸")
+class ProcessingWorker(QObject):
+    """后台处理线程"""
+    finished = Signal(object)
+    error = Signal(str)
 
-        self.screen_width = self.root.winfo_screenwidth()
-        self.screen_height = self.root.winfo_screenheight()
-        window_w = int(self.screen_width * 0.85)
-        window_h = int(self.screen_height * 0.85)
-        self.root.geometry(f"{window_w}x{window_h}")
+    def __init__(self, processor: ImageProcessor, params: dict):
+        super().__init__()
+        self.processor = processor
+        self.params = params
 
+    def run(self):
+        try:
+            result = self.processor.process_image(
+                image_path=self.params['image_path'],
+                grid_w=self.params['grid_w'],
+                grid_h=self.params['grid_h'],
+                canvas_size=self.params['canvas_size'],
+                show_grid=self.params['show_grid'],
+                grid_color=self.params['grid_color'],
+                palette_name=self.params['palette_name'],
+                show_color_legend=self.params['show_legend'],
+                show_row_col_labels=self.params['show_labels']
+            )
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class ColorChartDialog(QMainWindow):
+    """色卡预览窗口 - 横向排列"""
+
+    def __init__(self, parent=None, palette_name="mard_221", is_dark_theme=False):
+        super().__init__(parent)
+        self.setWindowTitle("🎨 拼豆色卡预览")
+        self.resize(1400, 900)
+        self.setWindowFlags(Qt.Window)
+
+        self.palette_name = palette_name
+        self.palette = get_palette(palette_name)
+        self.filtered_colors = []
+        self.is_dark_theme = is_dark_theme
+
+        self._init_ui()
+        self._load_colors()
+
+    def _init_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        # 顶部工具栏
+        toolbar = QHBoxLayout()
+
+        # 标题
+        title = QLabel(f"🎨 {self._get_palette_display_name()}")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #0078D4")
+        toolbar.addWidget(title)
+
+        # 统计
+        self.lbl_stats = QLabel("共 0 种颜色")
+        self.lbl_stats.setStyleSheet("color: #666")
+        toolbar.addWidget(self.lbl_stats)
+
+        toolbar.addStretch()
+
+        # 色卡选择
+        toolbar.addWidget(QLabel("色卡:"))
+        self.combo_palette = QComboBox()
+        self.combo_palette.addItems([name for name, _ in PALETTE_OPTIONS])
+        self.combo_palette.setCurrentText(self._get_palette_display_name())
+        self.combo_palette.currentTextChanged.connect(self._on_palette_change)
+        toolbar.addWidget(self.combo_palette)
+
+        # 搜索框
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("搜索颜色名称或色号...")
+        self.search_input.setFixedWidth(250)
+        self.search_input.textChanged.connect(self._filter_colors)
+        toolbar.addWidget(self.search_input)
+
+        layout.addLayout(toolbar)
+
+        # 颜色卡片区域 - 使用滚动区域
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        self.colors_container = QWidget()
+        # 🔧 使用 QGridLayout 实现横向排列
+        self.colors_layout = QGridLayout(self.colors_container)
+        self.colors_layout.setSpacing(10)
+        self.colors_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        self.scroll.setWidget(self.colors_container)
+        layout.addWidget(self.scroll, 1)
+
+        # 底部按钮
+        btn_frame = QHBoxLayout()
+        btn_export = QPushButton("💾 导出 CSV")
+        btn_export.clicked.connect(self._export_csv)
+        btn_frame.addWidget(btn_export)
+        btn_frame.addStretch()
+        layout.addLayout(btn_frame)
+
+    def _get_palette_display_name(self):
+        for display, internal in PALETTE_OPTIONS:
+            if internal == self.palette_name:
+                return display
+        return self.palette_name
+
+    def _load_colors(self, filter_text=""):
+        # 清理现有卡片
+        while self.colors_layout.count():
+            item = self.colors_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        colors_data = []
+        for i, (rgb, name, code) in enumerate(zip(
+                self.palette.colors,
+                self.palette.names,
+                self.palette.codes
+        )):
+            hex_val = '#{:02X}{:02X}{:02X}'.format(*rgb)
+            colors_data.append({
+                'code': code.strip(),
+                'name': name.strip() if name.strip() else '',
+                'rgb': rgb,
+                'hex': hex_val.lower(),
+                'group': code.strip()[0]
+            })
+
+        if filter_text:
+            ft = filter_text.lower()
+            colors_data = [c for c in colors_data
+                           if ft in c['code'].lower() or ft in c['name'].lower()]
+
+        self.filtered_colors = colors_data
+        self.lbl_stats.setText(f"显示 {len(colors_data)}/{len(self.palette.colors)} 种颜色")
+
+        # 🔧 横向排列：每行显示 10 个颜色卡片
+        cols = 10
+        row = 0
+        col = 0
+
+        for color in colors_data:
+            card = self._create_color_card(color)
+            self.colors_layout.addWidget(card, row, col)
+            col += 1
+            if col >= cols:
+                col = 0
+                row += 1
+
+    def _create_color_card(self, color_info):
+        card = QFrame()
+        card.setFixedSize(130, 150)
+
+        # 根据主题设置样式
+        if self.is_dark_theme:
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: #3D3D3D;
+                    border: 1px solid #555555;
+                    border-radius: 8px;
+                }
+                QFrame:hover {
+                    border: 2px solid #0078D4;
+                    background-color: #4D4D4D;
+                }
+            """)
+        else:
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: white;
+                    border: 1px solid #ddd;
+                    border-radius: 8px;
+                }
+                QFrame:hover {
+                    border: 2px solid #0078D4;
+                    background-color: #E8F4FD;
+                }
+            """)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(5)
+
+        # 颜色预览
+        color_label = QLabel()
+        color_label.setFixedSize(100, 50)
+        color_label.setStyleSheet(f"""
+            background-color: {color_info['hex']};
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        """)
+        color_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(color_label)
+
+        # 色号
+        code_label = QLabel(color_info['code'])
+        code_label.setStyleSheet("font-weight: bold; font-size: 13px")
+        code_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(code_label)
+
+        # 名称
+        name_label = QLabel(color_info['name'] or '—')
+        name_label.setWordWrap(True)
+        name_label.setStyleSheet("color: #666; font-size: 11px")
+        name_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(name_label)
+
+        # RGB
+        rgb_label = QLabel(f"RGB{color_info['rgb']}")
+        rgb_label.setStyleSheet("color: #0078D4; font-size: 10px")
+        rgb_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(rgb_label)
+
+        return card
+
+    def _filter_colors(self, text):
+        self._load_colors(text)
+
+    def _on_palette_change(self, text):
+        for display, internal in PALETTE_OPTIONS:
+            if display == text:
+                self.palette_name = internal
+                self.palette = get_palette(internal)
+                self._load_colors()
+                self.setWindowTitle(f"🎨 {text}")
+                break
+
+    def _export_csv(self):
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "导出 CSV", "", "CSV 文件 (*.csv)"
+        )
+        if save_path:
+            try:
+                with open(save_path, 'w', encoding='utf-8-sig') as f:
+                    f.write("色号，颜色名称，R,G,B,HEX\n")
+                    for c in self.filtered_colors:
+                        r, g, b = c['rgb']
+                        f.write(f"{c['code']},{c['name']},{r},{g},{b},{c['hex']}\n")
+                QMessageBox.information(self, "成功", f"已保存至:\n{save_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"导出失败：{e}")
+
+
+class DesktopUI(QMainWindow):
+    """主界面 - 纯 PySide6 版本"""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("🎨 拼豆图纸生成器")
+        self.resize(1400, 900)
+
+        # 主题状态
+        self.is_dark_theme = False
+
+        # 核心组件
         self.processor = ImageProcessor()
         self.history_mgr = HistoryManager()
+        self.worker_thread: Optional[QThread] = None
+        self.worker: Optional[ProcessingWorker] = None
 
-        self.original_image = None
-        self.processed_image = None
-        self.photo_ref = None
-        self.selected_file = None
-        self.current_save_path = None
+        # 状态
+        self.selected_file: Optional[str] = None
+        self.current_image: Optional[QImage] = None
         self.color_stats = {}
         self.total_beads = 0
-
-        # 性能优化
-        self.preview_timer = None
+        self.preview_timer: Optional[QTimer] = None
         self.is_processing = False
-        self.previous_states = []
-        self.max_undo_steps = 10
-        self.is_calculating = False
 
         # 色卡窗口
-        self.color_chart_window = None
+        self.color_chart_window: Optional[ColorChartDialog] = None
 
-        self.setup_ui()
+        self._init_ui()
+        self._init_status_bar()
+        self._apply_theme()
 
-    def setup_ui(self):
-        # === 主容器 ===
-        main_container = ttk.Frame(self.root, padding=15)
-        main_container.pack(fill=tk.BOTH, expand=tk.YES)
+    def _init_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
 
-        # === 左侧面板 ===
-        left_panel = ttk.LabelFrame(main_container, text="⚙️ 设置面板", padding=15)
-        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
-        left_panel.configure(width=350)
-        left_panel.pack_propagate(False)
+        # === 顶部工具栏 ===
+        toolbar = QHBoxLayout()
 
-        # 可滚动区域
-        canvas = tk.Canvas(left_panel, width=320, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(left_panel, orient=tk.VERTICAL, command=canvas.yview)
-        self.scrollable_frame = ttk.Frame(canvas)
+        title = QLabel("🎨 拼豆图纸生成器")
+        title.setStyleSheet("font-size: 18px; font-weight: bold")
+        toolbar.addWidget(title)
 
-        self.scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        toolbar.addStretch()
 
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        # 🔧 主题切换按钮
+        self.btn_theme = QPushButton("🌙 深色模式")
+        self.btn_theme.setFixedWidth(120)
+        self.btn_theme.clicked.connect(self._toggle_theme)
+        toolbar.addWidget(self.btn_theme)
 
-        # ===== 1. 图片选择 =====
-        self._create_section_title("📁 图片源")
+        main_layout.addLayout(toolbar)
 
-        self.btn_select = ttk.Button(self.scrollable_frame, text="选择图片", command=self.select_image)
-        self.btn_select.pack(fill=tk.X, pady=5)
+        # 使用 Splitter 分隔左右
+        splitter = QSplitter(Qt.Horizontal)
 
-        self.lbl_file = ttk.Label(self.scrollable_frame, text="未选择图片", foreground="gray", wraplength=300)
-        self.lbl_file.pack(fill=tk.X, pady=5)
+        # 左侧设置面板
+        left_panel = self._create_setting_panel()
+        splitter.addWidget(left_panel)
 
-        # ===== 2. 网格设置 =====
-        self._create_section_title("📐 网格设置")
+        # 右侧预览面板
+        right_panel = self._create_preview_panel()
+        splitter.addWidget(right_panel)
 
-        ttk.Label(self.scrollable_frame, text="画布比例:").pack(anchor=tk.W)
-        self.ratio_var = tk.StringVar(value="原始比例")
-        ratios = ["原始比例", "1:1 (正方形)", "4:3", "3:4", "16:9", "9:16", "自定义"]
-        self.combo_ratio = ttk.Combobox(self.scrollable_frame, textvariable=self.ratio_var, values=ratios,
-                                        state="readonly")
-        self.combo_ratio.pack(fill=tk.X, pady=5)
-        self.combo_ratio.bind("<<ComboboxSelected>>", self._on_ratio_change)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
 
-        frame_wh = ttk.Frame(self.scrollable_frame)
-        frame_wh.pack(fill=tk.X, pady=10)
+        main_layout.addWidget(splitter)
 
-        ttk.Label(frame_wh, text="宽 (颗):").grid(row=0, column=0, padx=5, sticky=tk.W)
-        self.entry_w = ttk.Entry(frame_wh, width=8)
-        self.entry_w.insert(0, "50")
-        self.entry_w.grid(row=0, column=1, padx=5)
-        self.entry_w.bind("<Return>", self._on_enter_press)
-        self.entry_w.bind("<FocusOut>", lambda e: self._on_dimension_change('w'))
+    def _create_setting_panel(self) -> QWidget:
+        """创建设置面板"""
+        panel = QFrame()
+        panel.setFrameStyle(QFrame.StyledPanel)
+        panel.setMinimumWidth(350)
+        panel.setMaximumWidth(400)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(12)
 
-        ttk.Label(frame_wh, text="高 (颗):").grid(row=0, column=2, padx=5, sticky=tk.W)
-        self.entry_h = ttk.Entry(frame_wh, width=8)
-        self.entry_h.insert(0, "50")
-        self.entry_h.grid(row=0, column=3, padx=5)
-        self.entry_h.bind("<Return>", self._on_enter_press)
-        self.entry_h.bind("<FocusOut>", lambda e: self._on_dimension_change('h'))
+        # 标题
+        title = QLabel("⚙️ 设置面板")
+        title.setStyleSheet("font-size: 16px; font-weight: bold")
+        layout.addWidget(title)
 
-        # ===== 3. 色卡选择 =====
-        self._create_section_title("🎨 色卡选择")
+        # 1. 图片选择
+        self._add_section_title(layout, "📁 图片源")
+        self.btn_select = QPushButton("选择图片")
+        self.btn_select.clicked.connect(self._select_image)
+        layout.addWidget(self.btn_select)
 
-        ttk.Label(self.scrollable_frame, text="色卡方案:").pack(anchor=tk.W)
-        self.palette_var = tk.StringVar(value="MARD 221 色")
-        self.combo_palette = ttk.Combobox(self.scrollable_frame, textvariable=self.palette_var,
-                                          values=[name for name, _ in PALETTE_OPTIONS], state="readonly")
-        self.combo_palette.pack(fill=tk.X, pady=5)
-        self.combo_palette.bind("<<ComboboxSelected>>", lambda e: self._trigger_preview())
+        self.lbl_file = QLabel("未选择图片")
+        self.lbl_file.setStyleSheet("color: gray")
+        layout.addWidget(self.lbl_file)
 
-        self.lbl_palette_info = ttk.Label(self.scrollable_frame, text="", foreground="blue")
-        self.lbl_palette_info.pack(anchor=tk.W, pady=5)
-        self._update_palette_info()
+        # 2. 网格设置
+        self._add_section_title(layout, "📐 网格设置")
 
-        # ===== 4. 画布设置 =====
-        self._create_section_title("🖼️ 画布设置")
-        self._create_section_title("🖼️ 画布设置")
+        layout.addWidget(QLabel("画布比例:"))
+        self.combo_ratio = QComboBox()
+        self.combo_ratio.addItems([
+            "原始比例", "1:1 (正方形)", "4:3", "3:4", "16:9", "9:16"
+        ])
+        self.combo_ratio.currentTextChanged.connect(self._on_ratio_change)
+        layout.addWidget(self.combo_ratio)
 
-        ttk.Label(self.scrollable_frame, text="画布尺寸 (像素):").pack(anchor=tk.W)
-        self.canvas_size_var = tk.StringVar(value="1500")
-        self.combo_canvas_size = ttk.Combobox(self.scrollable_frame, textvariable=self.canvas_size_var,
-                                              values=["1000", "1500", "2000", "2500", "3000"], state="readonly")
-        self.combo_canvas_size.pack(fill=tk.X, pady=5)
-        self.combo_canvas_size.bind("<<ComboboxSelected>>", lambda e: self._trigger_preview())
+        grid_layout = QHBoxLayout()
+        grid_layout.addWidget(QLabel("宽 (颗):"))
+        self.spin_w = QSpinBox()
+        self.spin_w.setRange(10, 200)
+        self.spin_w.setValue(50)
+        self.spin_w.valueChanged.connect(self._trigger_preview)
+        grid_layout.addWidget(self.spin_w)
 
-        # 🔧 新增：行列标号开关
-        self.show_labels_var = tk.BooleanVar(value=True)
-        self.chk_labels = ttk.Checkbutton(self.scrollable_frame, text="显示行列标号",
-                                          variable=self.show_labels_var,
-                                          command=lambda: self._trigger_preview())
-        self.chk_labels.pack(anchor=tk.W, pady=5)
+        grid_layout.addWidget(QLabel("高 (颗):"))
+        self.spin_h = QSpinBox()
+        self.spin_h.setRange(10, 200)
+        self.spin_h.setValue(50)
+        self.spin_h.valueChanged.connect(self._trigger_preview)
+        grid_layout.addWidget(self.spin_h)
 
-        self.show_grid_var = tk.BooleanVar(value=True)
-        self.chk_grid = ttk.Checkbutton(self.scrollable_frame, text="显示网格线", variable=self.show_grid_var,
-                                        command=lambda: self._trigger_preview())
-        self.chk_grid.pack(anchor=tk.W, pady=5)
-        ttk.Label(self.scrollable_frame, text="画布尺寸 (像素):").pack(anchor=tk.W)
-        self.canvas_size_var = tk.StringVar(value="1500")
-        self.combo_canvas_size = ttk.Combobox(self.scrollable_frame, textvariable=self.canvas_size_var,
-                                              values=["1000", "1500", "2000", "2500", "3000"], state="readonly")
-        self.combo_canvas_size.pack(fill=tk.X, pady=5)
-        self.combo_canvas_size.bind("<<ComboboxSelected>>", lambda e: self._trigger_preview())
+        layout.addLayout(grid_layout)
 
-        self.show_grid_var = tk.BooleanVar(value=True)
-        self.chk_grid = ttk.Checkbutton(self.scrollable_frame, text="显示网格线", variable=self.show_grid_var,
-                                        command=lambda: self._trigger_preview())
-        self.chk_grid.pack(anchor=tk.W, pady=5)
+        # 3. 色卡选择
+        self._add_section_title(layout, "🎨 色卡选择")
 
-        self.show_legend_var = tk.BooleanVar(value=True)
-        self.chk_legend = ttk.Checkbutton(self.scrollable_frame, text="显示颜色图例", variable=self.show_legend_var,
-                                          command=lambda: self._trigger_preview())
-        self.chk_legend.pack(anchor=tk.W, pady=5)
+        self.combo_palette = QComboBox()
+        self.combo_palette.addItems([name for name, _ in PALETTE_OPTIONS])
+        self.combo_palette.setCurrentText("MARD 221 色")
+        self.combo_palette.currentTextChanged.connect(self._trigger_preview)
+        layout.addWidget(self.combo_palette)
 
-        frame_grid_color = ttk.Frame(self.scrollable_frame)
-        frame_grid_color.pack(fill=tk.X, pady=5)
-        ttk.Label(frame_grid_color, text="网格颜色:").pack(side=tk.LEFT)
-        self.grid_color_var = tk.StringVar(value="#C8C8C8")
-        self.entry_grid_color = ttk.Entry(frame_grid_color, textvariable=self.grid_color_var, width=12)
-        self.entry_grid_color.pack(side=tk.LEFT, padx=10)
-        self.entry_grid_color.bind("<KeyRelease>", lambda e: self._trigger_preview())
+        self.btn_color_chart = QPushButton("🎨 查看色卡")
+        self.btn_color_chart.clicked.connect(self._open_color_chart)
+        layout.addWidget(self.btn_color_chart)
 
-        # ===== 5. 操作按钮 =====
-        self._create_section_title("🔧 操作")
+        # 4. 画布设置
+        self._add_section_title(layout, "🖼️ 画布设置")
 
-        frame_buttons = ttk.Frame(self.scrollable_frame)
-        frame_buttons.pack(fill=tk.X, pady=10)
+        self.combo_canvas = QComboBox()
+        self.combo_canvas.addItems(["1000", "1500", "2000", "2500", "3000"])
+        self.combo_canvas.setCurrentText("1500")
+        self.combo_canvas.currentTextChanged.connect(self._trigger_preview)
+        layout.addWidget(self.combo_canvas)
 
-        self.btn_undo = ttk.Button(frame_buttons, text="↩️ 撤销", command=self.undo, width=8)
-        self.btn_undo.pack(side=tk.LEFT, padx=5)
-        self.btn_undo.config(state=tk.DISABLED)
+        self.chk_labels = QCheckBox("显示行列标号")
+        self.chk_labels.setChecked(True)
+        self.chk_labels.stateChanged.connect(self._trigger_preview)
+        layout.addWidget(self.chk_labels)
 
-        self.btn_generate = ttk.Button(frame_buttons, text="🔄 生成", command=self.generate_preview, width=8)
-        self.btn_generate.pack(side=tk.LEFT, padx=5)
+        self.chk_grid = QCheckBox("显示网格线")
+        self.chk_grid.setChecked(True)
+        self.chk_grid.stateChanged.connect(self._trigger_preview)
+        layout.addWidget(self.chk_grid)
 
-        self.btn_save = ttk.Button(self.scrollable_frame, text="💾 保存并添加到历史", command=self.save_to_history)
-        self.btn_save.pack(fill=tk.X, pady=15)
+        self.chk_legend = QCheckBox("显示颜色图例")
+        self.chk_legend.setChecked(True)
+        self.chk_legend.stateChanged.connect(self._trigger_preview)
+        layout.addWidget(self.chk_legend)
 
-        # 色卡预览按钮
-        self.btn_color_chart = ttk.Button(self.scrollable_frame, text="🎨 查看色卡", command=self.open_color_chart)
-        self.btn_color_chart.pack(fill=tk.X, pady=5)
+        # 网格颜色
+        grid_color_layout = QHBoxLayout()
+        grid_color_layout.addWidget(QLabel("网格颜色:"))
+        self.btn_grid_color = QPushButton("#C8C8C8")
+        self.btn_grid_color.setFixedWidth(100)
+        self.btn_grid_color.clicked.connect(self._select_grid_color)
+        grid_color_layout.addWidget(self.btn_grid_color)
+        layout.addLayout(grid_color_layout)
 
-        # ===== 6. 颜色统计 =====
-        self._create_section_title("📊 颜色统计")
-        self.lbl_color_stats = ttk.Label(self.scrollable_frame, text="生成后显示", foreground="gray", wraplength=300)
-        self.lbl_color_stats.pack(fill=tk.X, pady=5)
+        layout.addStretch()
 
-        # ===== 7. 历史记录 =====
-        self._create_section_title("📜 历史记录")
+        # 操作按钮
+        self.btn_generate = QPushButton("🔄 生成预览")
+        self.btn_generate.clicked.connect(self._generate_preview)
+        layout.addWidget(self.btn_generate)
 
-        frame_hist_btn = ttk.Frame(self.scrollable_frame)
-        frame_hist_btn.pack(fill=tk.X, pady=5)
-        ttk.Button(frame_hist_btn, text="刷新", command=self.refresh_history_list, width=6).pack(side=tk.LEFT, padx=2)
-        ttk.Button(frame_hist_btn, text="清除", command=self.clear_history, width=6).pack(side=tk.LEFT, padx=2)
+        self.btn_save = QPushButton("💾 保存图片")
+        self.btn_save.clicked.connect(self._save_image)
+        layout.addWidget(self.btn_save)
 
-        self.list_history = tk.Listbox(self.scrollable_frame, height=6)
-        self.list_history.pack(fill=tk.X, pady=5)
-        self.list_history.bind("<<ListboxSelect>>", self.load_history_item)
-        self.refresh_history_list()
+        # 颜色统计
+        self._add_section_title(layout, "📊 颜色统计")
+        self.lbl_stats = QLabel("生成后显示")
+        self.lbl_stats.setWordWrap(True)
+        self.lbl_stats.setStyleSheet("color: gray")
+        layout.addWidget(self.lbl_stats)
 
-        frame_hist_action = ttk.Frame(self.scrollable_frame)
-        frame_hist_action.pack(fill=tk.X, pady=5)
-        ttk.Button(frame_hist_action, text="加载", command=self.load_selected_history, width=8).pack(side=tk.LEFT,
-                                                                                                     padx=2)
-        ttk.Button(frame_hist_action, text="删除", command=self.delete_selected_history, width=8).pack(side=tk.LEFT,
-                                                                                                       padx=2)
+        # 历史记录
+        self._add_section_title(layout, "📜 历史记录")
+        self.history_list = QListWidget()
+        self.history_list.setMaximumHeight(150)
+        self.history_list.itemClicked.connect(self._load_history_item)
+        layout.addWidget(self.history_list)
 
-        # === 右侧预览面板 ===
-        right_panel = ttk.LabelFrame(main_container, text="🖼️ 实时预览", padding=15)
-        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=tk.YES)
+        hist_btn_layout = QHBoxLayout()
+        btn_refresh = QPushButton("刷新")
+        btn_refresh.clicked.connect(self._refresh_history)
+        hist_btn_layout.addWidget(btn_refresh)
 
-        self.canvas_frame = ttk.Frame(right_panel)
-        self.canvas_frame.pack(fill=tk.BOTH, expand=tk.YES, pady=10)
+        btn_clear = QPushButton("清除")
+        btn_clear.clicked.connect(self._clear_history)
+        hist_btn_layout.addWidget(btn_clear)
 
-        self.lbl_preview = ttk.Label(self.canvas_frame, anchor=tk.CENTER, background="#F3F3F3",
-                                     text="请选择图片并生成预览")
-        self.lbl_preview.pack(fill=tk.BOTH, expand=tk.YES)
+        btn_load = QPushButton("加载")
+        btn_load.clicked.connect(self._load_selected_history)
+        hist_btn_layout.addWidget(btn_load)
 
-        scale_frame = ttk.Frame(right_panel)
-        scale_frame.pack(fill=tk.X, pady=10)
+        layout.addLayout(hist_btn_layout)
 
-        ttk.Label(scale_frame, text="预览缩放:").pack(side=tk.LEFT)
-        self.zoom_var = tk.IntVar(value=300)
-        self.scale_zoom = ttk.Scale(scale_frame, from_=100, to=800, variable=self.zoom_var,
-                                    orient=tk.HORIZONTAL, command=self.update_zoom)
-        self.scale_zoom.pack(side=tk.LEFT, fill=tk.X, expand=tk.YES, padx=10)
-        self.lbl_zoom_val = ttk.Label(scale_frame, text="300px", width=8)
-        self.lbl_zoom_val.pack(side=tk.LEFT)
+        self._refresh_history()
 
-        self.lbl_status = ttk.Label(right_panel, text="✅ 就绪", foreground="green")
-        self.lbl_status.pack(pady=10)
+        return panel
 
-    def _create_section_title(self, text):
-        ttk.Label(self.scrollable_frame, text=text, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(15, 8))
-        ttk.Separator(self.scrollable_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 10))
+    def _create_preview_panel(self) -> QWidget:
+        """创建预览面板"""
+        panel = QFrame()
+        panel.setFrameStyle(QFrame.StyledPanel)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(12)
 
-    def _save_current_state(self):
-        state = {
-            'ratio': self.ratio_var.get(), 'width': self.entry_w.get(), 'height': self.entry_h.get(),
-            'palette': self.palette_var.get(), 'canvas_size': self.canvas_size_var.get(),
-            'show_grid': self.show_grid_var.get(), 'show_legend': self.show_legend_var.get(),
-            'grid_color': self.grid_color_var.get(), 'selected_file': self.selected_file,
-        }
-        self.previous_states.append(state)
-        if len(self.previous_states) > self.max_undo_steps:
-            self.previous_states.pop(0)
-        self.btn_undo.config(state=tk.NORMAL if len(self.previous_states) > 0 else tk.DISABLED)
+        # 标题
+        title = QLabel("🖼️ 实时预览")
+        title.setStyleSheet("font-size: 16px; font-weight: bold")
+        layout.addWidget(title)
 
-    def undo(self):
-        if not self.previous_states:
-            return
-        state = self.previous_states.pop()
-        self.ratio_var.set(state['ratio'])
-        self.entry_w.delete(0, tk.END)
-        self.entry_w.insert(0, state['width'])
-        self.entry_h.delete(0, tk.END)
-        self.entry_h.insert(0, state['height'])
-        self.palette_var.set(state['palette'])
-        self.canvas_size_var.set(state['canvas_size'])
-        self.show_grid_var.set(state['show_grid'])
-        self.show_legend_var.set(state['show_legend'])
-        self.grid_color_var.set(state['grid_color'])
-        if state['selected_file']:
-            self.selected_file = state['selected_file']
-            self.lbl_file.config(text=state['selected_file'].split("/")[-1], foreground="black")
-        self._update_palette_info()
-        self.btn_undo.config(state=tk.NORMAL if len(self.previous_states) > 0 else tk.DISABLED)
-        self.generate_preview()
-        self.lbl_status.config(text="↩️ 已撤销", foreground="orange")
+        # 进度条
+        self.progress_bar = QProgressBar()
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
 
-    def open_color_chart(self):
-        """打开色卡预览窗口"""
-        if self.color_chart_window is None or not self.color_chart_window.window.winfo_exists():
-            from ui.color_chart_ui import ColorChartWindow
-            current_palette = self.palette_var.get()
-            palette_internal = "mard_221"
-            for display, internal in PALETTE_OPTIONS:
-                if display == current_palette:
-                    palette_internal = internal
-                    break
-            self.color_chart_window = ColorChartWindow(self.root, palette_name=palette_internal)
+        # 图片预览
+        self.image_label = QLabel("请选择图片并生成预览")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setStyleSheet("""
+            background-color: #F3F3F3;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            min-height: 400px;
+        """)
+        layout.addWidget(self.image_label, 1)
+
+        # 缩放控制
+        zoom_layout = QHBoxLayout()
+        zoom_layout.addWidget(QLabel("预览缩放:"))
+        self.spin_zoom = QSpinBox()
+        self.spin_zoom.setRange(100, 800)
+        self.spin_zoom.setValue(300)
+        self.spin_zoom.setSuffix("px")
+        self.spin_zoom.valueChanged.connect(self._update_zoom)
+        zoom_layout.addWidget(self.spin_zoom)
+        zoom_layout.addStretch()
+        layout.addLayout(zoom_layout)
+
+        # 状态
+        self.lbl_status = QLabel("✅ 就绪")
+        self.lbl_status.setStyleSheet("color: green; font-weight: bold")
+        layout.addWidget(self.lbl_status)
+
+        return panel
+
+    def _add_section_title(self, layout, text):
+        """添加分区标题"""
+        label = QLabel(text)
+        label.setStyleSheet("font-weight: bold; margin-top: 10px")
+        layout.addWidget(label)
+
+    def _init_status_bar(self):
+        """初始化状态栏"""
+        self.statusBar().showMessage("就绪")
+
+    # ==================== 主题切换功能 ====================
+
+    def _toggle_theme(self):
+        """切换主题"""
+        self.is_dark_theme = not self.is_dark_theme
+        self._apply_theme()
+
+    def _apply_theme(self):
+        """应用主题"""
+        if self.is_dark_theme:
+            self.setStyleSheet(DARK_THEME)
+            self.btn_theme.setText("☀️ 浅色模式")
         else:
-            self.color_chart_window.window.focus_force()
-            self.color_chart_window.window.lift()
-    def _on_enter_press(self, event):
-        self._save_current_state()
-        widget = event.widget
-        if widget == self.entry_w:
-            self._calculate_dimension('w')
-        elif widget == self.entry_h:
-            self._calculate_dimension('h')
-        self.generate_preview()
+            self.setStyleSheet(LIGHT_THEME)
+            self.btn_theme.setText("🌙 深色模式")
 
-    def _on_ratio_change(self, event=None):
-        self._save_current_state()
+        # 更新色卡窗口主题
+        if self.color_chart_window:
+            self.color_chart_window.is_dark_theme = self.is_dark_theme
+            self.color_chart_window._load_colors()
+
+    # ==================== 功能方法 ====================
+
+    def _select_image(self):
+        """选择图片"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择图片", "",
+            "Image Files (*.jpg *.png *.jpeg *.bmp)"
+        )
+        if file_path:
+            self.selected_file = file_path
+            self.lbl_file.setText(Path(file_path).name)
+            self.lbl_file.setStyleSheet("color: black")
+
+            from PIL import Image
+            try:
+                with Image.open(file_path) as img:
+                    w, h = img.size
+                    suggested = min(max(30, w // 20), 80)
+                    self.spin_w.setValue(suggested)
+                    self._calculate_dimension('w')
+            except:
+                pass
+
+            self._trigger_preview()
+
+    def _calculate_dimension(self, source: str):
+        """计算尺寸"""
+        w = self.spin_w.value()
+        h = self.spin_h.value()
+        ratio = self.combo_ratio.currentText()
+
+        if ratio == "1:1 (正方形)":
+            if source == 'w':
+                self.spin_h.setValue(w)
+            else:
+                self.spin_w.setValue(h)
+        elif ratio == "4:3":
+            if source == 'w':
+                self.spin_h.setValue(max(1, round(w * 3 / 4)))
+            else:
+                self.spin_w.setValue(max(1, round(h * 4 / 3)))
+        elif ratio == "16:9":
+            if source == 'w':
+                self.spin_h.setValue(max(1, round(w * 9 / 16)))
+            else:
+                self.spin_w.setValue(max(1, round(h * 16 / 9)))
+
+    def _on_ratio_change(self):
+        """比例变化"""
         self._calculate_dimension('w')
         self._trigger_preview()
 
-    def _on_dimension_change(self, source):
-        if self.is_calculating:
-            return
-        self._calculate_dimension(source)
-        self._trigger_preview()
-
-    def _calculate_dimension(self, source):
-        if self.is_calculating:
-            return
-        self.is_calculating = True
-        try:
-            w_str = self.entry_w.get().strip()
-            h_str = self.entry_h.get().strip()
-            w = int(w_str) if w_str else 50
-            h = int(h_str) if h_str else 50
-        except:
-            self.is_calculating = False
-            return
-
-        ratio = self.ratio_var.get()
-        if ratio == "1:1 (正方形)":
-            if source == 'w':
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(w))
-            else:
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(h))
-        elif ratio == "4:3":
-            if source == 'w':
-                new_h = max(1, round(w * 3 / 4))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 4 / 3))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        elif ratio == "3:4":
-            if source == 'w':
-                new_h = max(1, round(w * 4 / 3))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 3 / 4))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        elif ratio == "16:9":
-            if source == 'w':
-                new_h = max(1, round(w * 9 / 16))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 16 / 9))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        elif ratio == "9:16":
-            if source == 'w':
-                new_h = max(1, round(w * 16 / 9))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 9 / 16))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        self.is_calculating = False
-
-    def _update_palette_info(self):
-        palette_name = self.palette_var.get()
-        for display_name, internal_name in PALETTE_OPTIONS:
-            if display_name == palette_name:
-                palette = get_palette(internal_name)
-                self.lbl_palette_info.config(text=f"✓ 共 {len(palette.colors)} 种颜色")
-                break
-
     def _trigger_preview(self):
-        if self.is_processing:
-            return
+        """触发预览（防抖）"""
         if self.preview_timer:
-            self.root.after_cancel(self.preview_timer)
-        self.preview_timer = self.root.after(800, self.generate_preview)
+            self.preview_timer.stop()
 
-    def select_image(self):
-        self._save_current_state()
-        file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.jpg *.png *.jpeg")])
-        if file_path:
-            self.selected_file = file_path
-            self.lbl_file.config(text=file_path.split("/")[-1], foreground="black")
-            try:
-                self.original_image = Image.open(file_path)
-                if self.original_image:
-                    orig_w, orig_h = self.original_image.size
-                    suggested_w = min(max(30, orig_w // 20), 80)
-                    self.entry_w.delete(0, tk.END)
-                    self.entry_w.insert(0, str(suggested_w))
-                    self._calculate_dimension('w')
-                    self.generate_preview()
-            except:
-                self.original_image = None
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.timeout.connect(self._generate_preview)
+        self.preview_timer.start(500)
 
-    def generate_preview(self):
+    def _generate_preview(self):
+        """生成预览（后台线程）"""
         if self.is_processing:
             return
 
         if not self.selected_file:
-            self.lbl_status.config(text="⚠️ 请先选择图片！", foreground="orange")
+            QMessageBox.warning(self, "提示", "请先选择图片！")
             return
 
         self.is_processing = True
+        self.btn_generate.setEnabled(False)
+        self.progress_bar.show()
+        self.progress_bar.setValue(0)
+        self.lbl_status.setText("⏳ 正在处理...")
+        self.lbl_status.setStyleSheet("color: blue")
 
-        try:
-            w = int(self.entry_w.get()) if self.entry_w.get() else 50
-            h = int(self.entry_h.get()) if self.entry_h.get() else 50
-            canvas_size = int(self.canvas_size_var.get())
-            show_grid = self.show_grid_var.get()
-            show_legend = self.show_legend_var.get()
-            grid_color = self.hex_to_rgb(self.grid_color_var.get())
+        params = {
+            'image_path': self.selected_file,
+            'grid_w': self.spin_w.value(),
+            'grid_h': self.spin_h.value(),
+            'canvas_size': int(self.combo_canvas.currentText()),
+            'show_grid': self.chk_grid.isChecked(),
+            'grid_color': self._hex_to_rgb(self.btn_grid_color.text()),
+            'palette_name': self._get_palette_internal(),
+            'show_legend': self.chk_legend.isChecked(),
+            'show_labels': self.chk_labels.isChecked()
+        }
 
-            palette_internal = "mard_221"
-            for display_name, internal_name in PALETTE_OPTIONS:
-                if display_name == self.palette_var.get():
-                    palette_internal = internal_name
-                    break
-        except Exception as e:
-            self.lbl_status.config(text=f"❌ 参数错误：{e}", foreground="red")
-            self.is_processing = False
-            return
+        self.worker_thread = QThread(self)
+        self.worker = ProcessingWorker(self.processor, params)
+        self.worker.moveToThread(self.worker_thread)
 
-        self.lbl_status.config(text="⏳ 正在处理...", foreground="blue")
-        self.root.update()
+        self.worker.finished.connect(self._on_processing_finished)
+        self.worker.error.connect(self._on_processing_error)
+        self.worker.finished.connect(self.worker_thread.quit)
+        self.worker.error.connect(self.worker_thread.quit)
+        self.worker_thread.started.connect(self.worker.run)
 
-        result = self.processor.process_image(
-            self.selected_file, w, h, canvas_size=canvas_size,
-            show_grid=show_grid, grid_color=grid_color,
-            palette_name=palette_internal, show_color_legend=show_legend
-        )
+        self.worker_thread.start()
+
+    def _on_processing_finished(self, result):
+        """处理完成"""
+        self.progress_bar.hide()
+        self.btn_generate.setEnabled(True)
+        self.is_processing = False
 
         save_path, img_obj, color_stats, total_beads, grid_w, grid_h = result
 
         if img_obj:
-            self.processed_image = img_obj
-            self.current_save_path = save_path
+            img_obj = img_obj.convert('RGB')
+            data = img_obj.tobytes()
+            qimage = QImage(
+                data, img_obj.width, img_obj.height,
+                img_obj.width * 3, QImage.Format_RGB888
+            )
+            self.current_image = qimage
             self.color_stats = color_stats
             self.total_beads = total_beads
-            self.update_preview_display(img_obj)
-            self._update_color_stats_display(total_beads, grid_w, grid_h)
-            self.lbl_status.config(text=f"✅ 完成！{img_obj.width}x{img_obj.height} | 网格：{grid_w}x{grid_h}",
-                                   foreground="green")
+
+            self._update_preview_display()
+            self._update_stats_display(total_beads, grid_w, grid_h)
+
+            self.lbl_status.setText(f"✅ 完成！网格：{grid_w}×{grid_h}")
+            self.lbl_status.setStyleSheet("color: green")
+            self.statusBar().showMessage(f"生成完成！共 {total_beads} 颗豆子", 3000)
         else:
-            self.lbl_status.config(text="❌ 处理失败", foreground="red")
+            self.lbl_status.setText("❌ 处理失败")
+            self.lbl_status.setStyleSheet("color: red")
 
+    def _on_processing_error(self, error_msg):
+        """处理错误"""
+        self.progress_bar.hide()
+        self.btn_generate.setEnabled(True)
         self.is_processing = False
+        self.lbl_status.setText("❌ 处理失败")
+        self.lbl_status.setStyleSheet("color: red")
+        QMessageBox.critical(self, "错误", error_msg)
 
-    def save_to_history(self):
-        if not self.selected_file:
-            messagebox.showwarning("提示", "请先选择图片！")
-            return
+    def _update_preview_display(self):
+        """更新预览显示"""
+        if self.current_image:
+            zoom_size = self.spin_zoom.value()
+            scaled = self.current_image.scaled(
+                zoom_size, zoom_size,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(QPixmap.fromImage(scaled))
+            self.image_label.setText("")
 
-        try:
-            w = int(self.entry_w.get()) if self.entry_w.get() else 50
-            h = int(self.entry_h.get()) if self.entry_h.get() else 50
-            canvas_size = int(self.canvas_size_var.get())
-            show_grid = self.show_grid_var.get()
-            show_legend = self.show_legend_var.get()
-            grid_color = self.hex_to_rgb(self.grid_color_var.get())
+    def _update_zoom(self):
+        """更新缩放"""
+        self._update_preview_display()
 
-            palette_internal = "mard_221"
-            for display_name, internal_name in PALETTE_OPTIONS:
-                if display_name == self.palette_var.get():
-                    palette_internal = internal_name
-                    break
-        except Exception as e:
-            messagebox.showerror("错误", f"参数错误：{e}")
-            return
-
-        self.lbl_status.config(text="⏳ 正在保存...", foreground="blue")
-        self.root.update()
-
-        result = self.processor.process_image(
-            self.selected_file, w, h, canvas_size=canvas_size,
-            show_grid=show_grid, grid_color=grid_color,
-            palette_name=palette_internal, show_color_legend=show_legend
-        )
-
-        save_path, img_obj, color_stats, total_beads, grid_w, grid_h = result
-
-        if not img_obj:
-            messagebox.showerror("错误", "生成失败")
-            return
-
-        self.processed_image = img_obj
-        self.current_save_path = save_path
-        self.color_stats = color_stats
-        self.total_beads = total_beads
-        self.update_preview_display(img_obj)
-        self._update_color_stats_display(total_beads, grid_w, grid_h)
-
-        self.history_mgr.add_record(self.selected_file, save_path, w, h,
-                                    self.ratio_var.get(), canvas_size,
-                                    show_grid, grid_color, self.palette_var.get())
-        self.refresh_history_list()
-
-        file_size = os.path.getsize(save_path) / 1024
-        messagebox.showinfo("保存成功",
-                            f"图片已保存至：\n{save_path}\n\n尺寸：{img_obj.width}x{img_obj.height} 像素\n"
-                            f"文件大小：{file_size:.1f} KB\n使用色卡：{self.palette_var.get()}\n"
-                            f"总耗材：{total_beads} 颗豆子")
-
-        self.lbl_status.config(text="💾 已保存到历史记录", foreground="green")
-
-    def _update_color_stats_display(self, total_beads=0, grid_w=0, grid_h=0):
+    def _update_stats_display(self, total_beads, grid_w, grid_h):
+        """更新统计显示"""
         if not self.color_stats:
-            self.lbl_color_stats.config(text="生成后显示", foreground="gray")
             return
-        text = ""
-        sorted_stats = sorted(self.color_stats.items(), key=lambda x: x[1]['count'], reverse=True)
-        for code, info in sorted_stats[:10]:
+
+        text = "📊 颜色统计:\n"
+        sorted_stats = sorted(
+            self.color_stats.items(),
+            key=lambda x: x[1]['count'],
+            reverse=True
+        )[:10]
+
+        for code, info in sorted_stats:
             text += f"● {info['code']} {info['name']}: {info['count']}颗\n"
+
         if len(self.color_stats) > 10:
             text += f"... 共 {len(self.color_stats)} 种颜色\n"
-        text += f"\n总计：{total_beads} 颗豆子 | 网格：{grid_w}×{grid_h}"
-        self.lbl_color_stats.config(text=text, foreground="black")
 
-    def hex_to_rgb(self, hex_color):
+        text += f"\n总计：{total_beads} 颗豆子 | 网格：{grid_w}×{grid_h}"
+        self.lbl_stats.setText(text)
+        self.lbl_stats.setStyleSheet("color: black")
+
+    def _save_image(self):
+        """保存图片"""
+        if not self.current_image:
+            QMessageBox.warning(self, "提示", "请先生成预览！")
+            return
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "保存图片", "perler_pattern.png", "PNG Files (*.png)"
+        )
+        if save_path:
+            self.current_image.save(save_path)
+            QMessageBox.information(self, "成功", f"已保存至：{save_path}")
+
+    def _select_grid_color(self):
+        """选择网格颜色"""
+        color = QColor(self.btn_grid_color.text())
+        dialog = QColorDialog(color, self)
+        if dialog.exec():
+            new_color = dialog.selectedColor()
+            self.btn_grid_color.setText(new_color.name())
+            self._trigger_preview()
+
+    def _open_color_chart(self):
+        """打开色卡预览"""
+        palette_name = self._get_palette_internal()
+
+        if self.color_chart_window is None:
+            # 🔧 传递当前主题状态
+            self.color_chart_window = ColorChartDialog(
+                self,
+                palette_name,
+                is_dark_theme=self.is_dark_theme
+            )
+
+        self.color_chart_window.show()
+        self.color_chart_window.activateWindow()
+        self.color_chart_window.raise_()
+
+    def _get_palette_internal(self) -> str:
+        """获取色卡内部名称"""
+        display_name = self.combo_palette.currentText()
+        for display, internal in PALETTE_OPTIONS:
+            if display == display_name:
+                return internal
+        return "mard_221"
+
+    def _hex_to_rgb(self, hex_color: str) -> tuple:
+        """HEX 转 RGB"""
         hex_color = hex_color.lstrip('#')
         return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
-    def update_zoom(self, val):
-        size = int(float(val))
-        self.lbl_zoom_val.config(text=f"{size}px")
-        if self.processed_image:
-            display_img = self.processed_image.resize((size, size), resample=Image.NEAREST)
-            self.update_preview_display(display_img)
-
-    def update_preview_display(self, img):
-        max_display = min(self.screen_width // 2, 800)
-        if img.width > max_display:
-            ratio = max_display / img.width
-            img = img.resize((int(img.width * ratio), int(img.height * ratio)), resample=Image.NEAREST)
-        self.photo_ref = ImageTk.PhotoImage(img)
-        self.lbl_preview.config(image=self.photo_ref, text="")
-
-    def refresh_history_list(self):
-        self.list_history.delete(0, tk.END)
+    def _refresh_history(self):
+        """刷新历史"""
+        self.history_list.clear()
         for i, record in enumerate(self.history_mgr.get_list()):
             text = f"[{i}] {record['time']} - {record['width']}x{record['height']} ({record['palette']})"
-            self.list_history.insert(tk.END, text)
+            item = QListWidgetItem(text)
+            self.history_list.addItem(item)
 
-    def load_history_item(self, event):
-        self.load_selected_history()
+    def _clear_history(self):
+        """清除历史"""
+        reply = QMessageBox.question(
+            self, "确认", "确定要清除所有历史记录吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.history_mgr.clear_history()
+            self._refresh_history()
+            self.statusBar().showMessage("历史记录已清空", 3000)
 
-    def load_selected_history(self):
-        selection = self.list_history.curselection()
-        if not selection:
-            messagebox.showwarning("提示", "请先选择一条历史记录")
+    def _load_selected_history(self):
+        """加载选中历史"""
+        current = self.history_list.currentRow()
+        if current < 0:
+            QMessageBox.warning(self, "提示", "请先选择一条历史记录")
             return
-        index = selection[0]
-        record = self.history_mgr.get_record(index)
+
+        record = self.history_mgr.get_record(current)
         if not record:
             return
+
         if not os.path.exists(record['image_path']):
-            messagebox.showerror("错误", f"原图片已不存在")
+            QMessageBox.error(self, "错误", "原图片已不存在")
             return
 
-        self._save_current_state()
         self.selected_file = record['image_path']
-        self.lbl_file.config(text=os.path.basename(record['image_path']), foreground="black")
-        self.entry_w.delete(0, tk.END)
-        self.entry_w.insert(0, str(record['width']))
-        self.entry_h.delete(0, tk.END)
-        self.entry_h.insert(0, str(record['height']))
-        self.ratio_var.set(record.get('ratio', '原始比例'))
-        self.canvas_size_var.set(str(record.get('output_size', 1500)))
-        self.show_grid_var.set(record.get('show_grid', True))
-        self.grid_color_var.set(record.get('grid_color', '#C8C8C8'))
-        self.palette_var.set(record.get('palette', 'MARD 221 色'))
-        self._update_palette_info()
-        try:
-            self.original_image = Image.open(record['image_path'])
-        except:
-            self.original_image = None
-        self.lbl_status.config(text=f"📋 已加载历史 [{index}]，自动生成预览...", foreground="blue")
-        self.generate_preview()
+        self.lbl_file.setText(os.path.basename(record['image_path']))
+        self.lbl_file.setStyleSheet("color: black")
 
-    def delete_selected_history(self):
-        selection = self.list_history.curselection()
-        if not selection:
-            messagebox.showwarning("提示", "请先选择一条历史记录")
-            return
-        index = selection[0]
-        if messagebox.askyesno("确认", "确定要删除这条历史记录吗？"):
-            self.history_mgr.delete_record(index)
-            self.refresh_history_list()
-            self.lbl_status.config(text="🗑️ 已删除历史记录", foreground="orange")
+        self.spin_w.setValue(record['width'])
+        self.spin_h.setValue(record['height'])
+        self.combo_ratio.setCurrentText(record.get('ratio', '原始比例'))
+        self.combo_canvas.setCurrentText(str(record.get('output_size', 1500)))
+        self.chk_grid.setChecked(record.get('show_grid', True))
+        self.btn_grid_color.setText(record.get('grid_color', '#C8C8C8'))
+        self.combo_palette.setCurrentText(record.get('palette', 'MARD 221 色'))
 
-    def clear_history(self):
-        if messagebox.askyesno("确认", "确定要清除所有历史记录吗？\n此操作不可恢复！"):
-            self.history_mgr.clear_history()
-            self.refresh_history_list()
-            self.lbl_status.config(text="🗑️ 历史记录已清空", foreground="orange")
+        self.statusBar().showMessage(f"已加载历史 [{current}]，自动生成预览...", 3000)
+        self._trigger_preview()
+
+    def _load_history_item(self, item):
+        """加载历史项"""
+        self._load_selected_history()
+
+
+# ==================== 启动入口 ====================
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    font = QFont("Microsoft YaHei", 10)
+    app.setFont(font)
+
+    window = DesktopUI()
+    window.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

@@ -1,4 +1,3 @@
-# core/processor.py - 完整修改版
 from PIL import Image, ImageDraw, ImageFont
 from .colors import get_palette
 import os
@@ -12,25 +11,31 @@ class ImageProcessor:
         self._font_cache = {}
 
     def _get_font(self, size, bold=False):
-        """获取缓存的字体对象 - 使用微软雅黑"""
+        """获取缓存的字体对象 - 带 fallback 机制"""
         cache_key = f"{size}_{bold}"
         if cache_key not in self._font_cache:
+            font_obj = None
+            # 尝试加载 Windows 常见中文字体
             try:
                 font_name = "msyh.ttc" if bold else "msyh.ttf"
-                self._font_cache[cache_key] = ImageFont.truetype(font_name, size)
-            except:
+                font_obj = ImageFont.truetype(font_name, size)
+            except Exception:
+                # 尝试加载其他常见中文字体
                 try:
                     font_name = "simhei.ttf" if bold else "simsun.ttc"
-                    self._font_cache[cache_key] = ImageFont.truetype(font_name, size)
-                except:
-                    self._font_cache[cache_key] = ImageFont.load_default()
+                    font_obj = ImageFont.truetype(font_name, size)
+                except Exception:
+                    # 最终 fallback 到默认字体
+                    font_obj = ImageFont.load_default()
+
+            self._font_cache[cache_key] = font_obj
         return self._font_cache[cache_key]
 
     def process_image(self, image_path, grid_w, grid_h, canvas_size=1500,
                       show_grid=True, grid_color=(200, 200, 200), grid_width=1,
                       palette_name="mard_221", show_color_legend=True,
-                      show_row_col_labels=True):  # 🔧 新增参数
-        """生成专业拼豆图纸 - 带行列标号"""
+                      show_row_col_labels=True):
+        """生成专业拼豆图纸 - 核心处理逻辑"""
         try:
             img = Image.open(image_path).convert("RGB")
             orig_w, orig_h = img.size
@@ -79,10 +84,9 @@ class ImageProcessor:
             draw_width = cell_size * final_grid_w
             draw_height = cell_size * final_grid_h
 
-            # 🔧 5. 计算行列标号区域大小
+            # 5. 计算行列标号区域大小
             label_margin = 0
             if show_row_col_labels:
-                # 预留标号空间：顶部 + 左侧 + 底部 + 右侧
                 label_margin = 35  # 每边预留 35px
 
             # 6. 计算图例区域
@@ -92,7 +96,7 @@ class ImageProcessor:
                 legend_rows = (len(color_stats) + colors_per_row - 1) // colors_per_row
                 legend_height = legend_rows * 70 + 80
 
-            # 🔧 7. 总画布尺寸（包含标号边距）
+            # 7. 总画布尺寸（包含标号边距）
             total_width = max(draw_width + label_margin * 2, 1000)
             total_height = draw_height + label_margin * 2 + legend_height
 
@@ -100,11 +104,11 @@ class ImageProcessor:
             final_img = Image.new('RGB', (total_width, total_height), (255, 255, 255))
             draw = ImageDraw.Draw(final_img)
 
-            # 🔧 9. 计算网格起始位置（留出标号空间）
+            # 9. 计算网格起始位置（留出标号空间）
             start_x = label_margin + (total_width - label_margin * 2 - draw_width) // 2
             start_y = label_margin
 
-            # 🔧 10. 绘制行列标号
+            # 10. 绘制行列标号
             if show_row_col_labels:
                 self._draw_row_col_labels(draw, final_grid_w, final_grid_h,
                                           start_x, start_y, cell_size,
@@ -225,7 +229,7 @@ class ImageProcessor:
 
     def _draw_row_col_labels(self, draw, grid_w, grid_h, start_x, start_y, cell_size,
                              total_width, total_height, label_margin):
-        """🔧 绘制行列标号"""
+        """绘制行列标号"""
         font_label = self._get_font(14, bold=True)
         font_small = self._get_font(11)
 
