@@ -325,4 +325,3 @@ class ImageProcessor:
 
         # === 左上角装饰 ===
         draw.rectangle([0, 0, label_margin, label_margin], fill=(0, 120, 215))
-        #123456778990
