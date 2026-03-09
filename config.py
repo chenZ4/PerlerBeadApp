@@ -1,25 +1,24 @@
-# config.py - 全局配置
+# config.py - 确保包含这些内容
 import os
 from pathlib import Path
 
-# 版本信息
-VERSION = "1.0.0"
+VERSION = "0.0.1"
 APP_NAME = "🎨 拼豆图纸生成器"
 
-# 路径配置
 BASE_DIR = Path(__file__).parent
+CORE_DIR = BASE_DIR / "core"
+UI_DIR = BASE_DIR / "ui"
 RESOURCES_DIR = BASE_DIR / "resources"
 OUTPUT_DIR = BASE_DIR / "output"
 HISTORY_FILE = BASE_DIR / "history.json"
 SETTINGS_FILE = RESOURCES_DIR / "config.json"
 
 # 确保目录存在
-for directory in [RESOURCES_DIR, OUTPUT_DIR, RESOURCES_DIR / "fonts", RESOURCES_DIR / "icons"]:
+for directory in [RESOURCES_DIR, OUTPUT_DIR]:
     directory.mkdir(exist_ok=True)
 
-# 默认设置
 DEFAULT_SETTINGS = {
-    "theme": "light",  # light / dark
+    "theme": "light",
     "default_palette": "mard_221",
     "default_canvas_size": 1500,
     "default_grid_w": 50,
@@ -32,5 +31,18 @@ DEFAULT_SETTINGS = {
     "language": "zh-CN"
 }
 
-# 支持的平台
-SUPPORTED_PLATFORMS = ["windows", "android", "web"]
+
+def get_platform() -> str:
+    import platform
+    import sys
+
+    if hasattr(sys, 'getandroidapilevel'):
+        return "android"
+
+    system = platform.system().lower()
+    if system == "windows":
+        return "windows"
+    elif system == "android":
+        return "android"
+    else:
+        return "windows"
