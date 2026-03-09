@@ -1,18 +1,21 @@
-# core/history_manager.py
+# core/history_manager.py - 修正路径
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
-HISTORY_FILE = "history.json"
+# 🔧 使用绝对路径
+HISTORY_FILE = Path(__file__).parent.parent / "history.json"
 
 
 class HistoryManager:
     def __init__(self):
         self.history = []
+        self.max_records = 50
         self.load_history()
 
     def load_history(self):
-        if os.path.exists(HISTORY_FILE):
+        if HISTORY_FILE.exists():
             try:
                 with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)
@@ -23,10 +26,11 @@ class HistoryManager:
             self.history = []
 
     def _migrate_history(self):
+        """迁移旧版本历史记录"""
         updated = False
         for record in self.history:
             if 'palette' not in record:
-                record['palette'] = "佩勒 24 色"
+                record['palette'] = "MARD 221 色"
                 updated = True
             if 'output_size' not in record:
                 record['output_size'] = 1500
@@ -45,11 +49,13 @@ class HistoryManager:
             self.save_history()
 
     def save_history(self):
+        """保存历史记录"""
         with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.history, f, ensure_ascii=False, indent=2)
 
-    def add_record(self, image_path, save_path, width, height, ratio_mode, canvas_size,
-                   show_grid, grid_color, palette_name):
+    def add_record(self, image_path, save_path, width, height, ratio_mode,
+                   canvas_size, show_grid, grid_color, palette_name):
+        """添加新记录"""
         record = {
             "image_path": image_path,
             "save_path": save_path,
@@ -63,23 +69,27 @@ class HistoryManager:
             "time": datetime.now().strftime("%Y-%m-%d %H:%M")
         }
         self.history.insert(0, record)
-        if len(self.history) > 50:
-            self.history = self.history[:50]
+        if len(self.history) > self.max_records:
+            self.history = self.history[:self.max_records]
         self.save_history()
 
     def get_list(self):
+        """获取历史列表"""
         return self.history
 
     def get_record(self, index):
+        """获取单条记录"""
         if 0 <= index < len(self.history):
             return self.history[index]
         return None
 
     def clear_history(self):
+        """清空历史"""
         self.history = []
         self.save_history()
 
     def delete_record(self, index):
+        """删除单条记录"""
         if 0 <= index < len(self.history):
             self.history.pop(index)
             self.save_history()

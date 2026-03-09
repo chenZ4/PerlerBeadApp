@@ -1,9 +1,8 @@
-# ui/desktop_ui.py - 纯 PySide6 版本（色卡横向排列 + 主题切换）
+# ui/desktop_ui.py - 修正导入路径
 import os
 import sys
 from pathlib import Path
 from typing import Optional
-
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSize
 from PySide6.QtGui import QPixmap, QImage, QFont, QColor, QIcon, QPalette
 from PySide6.QtWidgets import (
@@ -14,10 +13,10 @@ from PySide6.QtWidgets import (
     QStatusBar, QColorDialog, QGridLayout
 )
 
+# 🔧 修正导入路径 - 从 core 导入
 from core.processor import ImageProcessor
 from core.history_manager import HistoryManager
 from core.colors import PALETTE_OPTIONS, get_palette
-
 # ==================== 主题样式表 ====================
 
 LIGHT_THEME = """

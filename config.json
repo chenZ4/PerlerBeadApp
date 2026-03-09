@@ -1,0 +1,13 @@
+{
+  "theme": "light",
+  "default_palette": "mard_221",
+  "default_canvas_size": 1500,
+  "default_grid_w": 50,
+  "default_grid_h": 50,
+  "show_grid": true,
+  "grid_color": "#C8C8C8",
+  "show_labels": true,
+  "show_legend": true,
+  "max_history_records": 50,
+  "language": "zh-CN"
+}
