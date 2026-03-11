@@ -1,6 +1,7 @@
 # ui/win_ui/main_window.py - 完整修复版
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSize
@@ -12,7 +13,6 @@ from PySide6.QtWidgets import (
     QFrame, QListWidget, QListWidgetItem, QMessageBox,
     QStatusBar, QColorDialog, QGridLayout
 )
-
 from core.processor import ImageProcessor
 from core.history_manager import HistoryManager
 from core.colors import PALETTE_OPTIONS, get_palette
@@ -158,12 +158,10 @@ class ColorChartDialog(QMainWindow):
         self.setWindowTitle("🎨 拼豆色卡预览")
         self.resize(1400, 900)
         self.setWindowFlags(Qt.Window)
-
         self.palette_name = palette_name
         self.palette = get_palette(palette_name)
         self.filtered_colors = []
         self.is_dark_theme = is_dark_theme
-
         self._init_ui()
         self._load_colors()
 
@@ -184,7 +182,7 @@ class ColorChartDialog(QMainWindow):
         toolbar.addWidget(self.lbl_stats)
         toolbar.addStretch()
 
-        toolbar.addWidget(QLabel("色卡:"))
+        toolbar.addWidget(QLabel("色卡："))
         self.combo_palette = QComboBox()
         self.combo_palette.addItems([name for name, _ in PALETTE_OPTIONS])
         self.combo_palette.setCurrentText(self._get_palette_display_name())
@@ -380,6 +378,7 @@ class DesktopUI(QMainWindow):
         main_layout.addWidget(splitter)
 
     def _create_setting_panel(self) -> QWidget:
+        """⚠️ 修复：只定义一次，包含 PNG + PDF 按钮"""
         panel = QFrame()
         panel.setFrameStyle(QFrame.StyledPanel)
         panel.setMinimumWidth(350)
@@ -402,21 +401,21 @@ class DesktopUI(QMainWindow):
         layout.addWidget(self.lbl_file)
 
         self._add_section_title(layout, "📐 网格设置")
-        layout.addWidget(QLabel("画布比例:"))
+        layout.addWidget(QLabel("画布比例："))
         self.combo_ratio = QComboBox()
         self.combo_ratio.addItems(["原始比例", "1:1 (正方形)", "4:3", "3:4", "16:9", "9:16"])
         self.combo_ratio.currentTextChanged.connect(self._on_ratio_change)
         layout.addWidget(self.combo_ratio)
 
         grid_layout = QHBoxLayout()
-        grid_layout.addWidget(QLabel("宽 (颗):"))
+        grid_layout.addWidget(QLabel("宽 (颗): "))
         self.spin_w = QSpinBox()
         self.spin_w.setRange(10, 200)
         self.spin_w.setValue(50)
         self.spin_w.valueChanged.connect(self._trigger_preview)
         grid_layout.addWidget(self.spin_w)
 
-        grid_layout.addWidget(QLabel("高 (颗):"))
+        grid_layout.addWidget(QLabel("高 (颗): "))
         self.spin_h = QSpinBox()
         self.spin_h.setRange(10, 200)
         self.spin_h.setValue(50)
@@ -458,7 +457,7 @@ class DesktopUI(QMainWindow):
         layout.addWidget(self.chk_legend)
 
         grid_color_layout = QHBoxLayout()
-        grid_color_layout.addWidget(QLabel("网格颜色:"))
+        grid_color_layout.addWidget(QLabel("网格颜色："))
         self.btn_grid_color = QPushButton("#C8C8C8")
         self.btn_grid_color.setFixedWidth(100)
         self.btn_grid_color.clicked.connect(self._select_grid_color)
@@ -471,9 +470,18 @@ class DesktopUI(QMainWindow):
         self.btn_generate.clicked.connect(self._generate_preview)
         layout.addWidget(self.btn_generate)
 
-        self.btn_save = QPushButton("💾 保存图片")
-        self.btn_save.clicked.connect(self._save_image)
-        layout.addWidget(self.btn_save)
+        # ✅ 修复：导出按钮区域（PNG + PDF 并排）
+        export_layout = QHBoxLayout()
+
+        self.btn_save_png = QPushButton("💾 保存 PNG")
+        self.btn_save_png.clicked.connect(self._save_image)
+        export_layout.addWidget(self.btn_save_png)
+
+        self.btn_save_pdf = QPushButton("📄 导出 PDF")  # ✅ 新增 PDF 按钮
+        self.btn_save_pdf.clicked.connect(self._export_pdf)  # ✅ 连接信号
+        export_layout.addWidget(self.btn_save_pdf)
+
+        layout.addLayout(export_layout)
 
         self._add_section_title(layout, "📊 颜色统计")
         self.lbl_stats = QLabel("生成后显示")
@@ -504,6 +512,54 @@ class DesktopUI(QMainWindow):
         self._refresh_history()
         return panel
 
+    def _export_pdf(self):
+        """✅ 修复：QImage 转 PIL Image 的正确方式"""
+        if not self.current_image or not hasattr(self, 'color_stats'):
+            QMessageBox.warning(self, "提示", "请先生成预览！")
+            return
+
+        from PIL import Image
+        import tempfile
+        import os
+
+        # ✅ 修复：先保存到临时文件，再读取为 PIL Image
+        temp_path = tempfile.mktemp(suffix='.png')
+        try:
+            self.current_image.save(temp_path)
+            pil_image = Image.open(temp_path).convert('RGB')
+
+            # 选择保存路径
+            save_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "导出 PDF",
+                "perler_pattern.pdf",
+                "PDF Files (*.pdf)"
+            )
+
+            if save_path:
+                try:
+                    pdf_path = self.processor.export_to_pdf(
+                        pattern_image=pil_image,
+                        color_stats=self.color_stats,
+                        grid_w=self.spin_w.value(),
+                        grid_h=self.spin_h.value(),
+                        total_beads=self.total_beads,
+                        palette_name=self._get_palette_internal(),
+                        filename=save_path
+                    )
+
+                    if pdf_path:
+                        QMessageBox.information(self, "成功", f"PDF 已保存至:\n{pdf_path}")
+                    else:
+                        QMessageBox.critical(self, "错误", "PDF 导出失败")
+
+                except Exception as e:
+                    QMessageBox.critical(self, "错误", f"PDF 导出失败:\n{str(e)}")
+        finally:
+            # 清理临时文件
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
     def _create_preview_panel(self) -> QWidget:
         panel = QFrame()
         panel.setFrameStyle(QFrame.StyledPanel)
@@ -523,7 +579,6 @@ class DesktopUI(QMainWindow):
         self.image_label = QLabel("请选择图片并生成预览")
         self.image_label.setAlignment(Qt.AlignCenter)
 
-        # 根据屏幕分辨率设置最小尺寸和默认缩放
         if self.screen_width >= 2560:
             min_size = 600
             default_zoom = 900
@@ -545,7 +600,7 @@ class DesktopUI(QMainWindow):
 
         # 🔧 缩放控制
         zoom_layout = QHBoxLayout()
-        zoom_layout.addWidget(QLabel("预览缩放:"))
+        zoom_layout.addWidget(QLabel("预览缩放："))
         self.spin_zoom = QSpinBox()
         self.spin_zoom.setRange(100, 2000)
         self.spin_zoom.setValue(default_zoom)
@@ -683,7 +738,6 @@ class DesktopUI(QMainWindow):
             self.color_stats = color_stats
             self.total_beads = total_beads
 
-            # 🔧 自动调整缩放
             self._auto_fit_zoom()
             self._update_stats_display(total_beads, grid_w, grid_h)
 
@@ -718,14 +772,12 @@ class DesktopUI(QMainWindow):
         self._update_preview_display()
 
     def _auto_fit_zoom(self):
-        """自动计算合适的缩放尺寸 - 屏幕自适应版"""
         if not self.current_image:
             return
 
         preview_width = self.image_label.width() - 40
         preview_height = self.image_label.height() - 40
 
-        # 根据屏幕分辨率设置最大缩放
         if self.screen_width >= 2560:
             max_zoom = 1500
         elif self.screen_width >= 1920:

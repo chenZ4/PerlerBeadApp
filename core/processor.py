@@ -1,6 +1,7 @@
 from PIL import Image, ImageDraw, ImageFont
 from .colors import get_palette
 import os
+from .pdf_exporter import PDFExporter
 
 
 class ImageProcessor:
@@ -9,6 +10,7 @@ class ImageProcessor:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
         self._font_cache = {}
+        self.pdf_exporter = PDFExporter()
 
     def _get_font(self, size, bold=False):
         """获取缓存的字体对象 - 带 fallback 机制"""
@@ -325,3 +327,60 @@ class ImageProcessor:
 
         # === 左上角装饰 ===
         draw.rectangle([0, 0, label_margin, label_margin], fill=(0, 120, 215))
+
+    def export_to_pdf(self, pattern_image, color_stats, grid_w, grid_h,
+                      total_beads, palette_name, filename=None):
+        """
+        导出为 PDF 格式
+
+        Args:
+            pattern_image: PIL Image 对象
+            color_stats: 颜色统计字典
+            grid_w: 网格宽度
+            grid_h: 网格高度
+            total_beads: 总豆子数
+            palette_name: 色卡名称
+            filename: 文件名（可选）
+
+        Returns:
+            str: PDF 文件路径
+        """
+        if filename is None:
+            filename = f"perler_{grid_w}x{grid_h}_{palette_name}.pdf"
+
+        save_path = os.path.join(self.output_dir, filename)
+
+        success = self.pdf_exporter.export(
+            output_path=save_path,
+            pattern_image=pattern_image,
+            color_stats=color_stats,
+            grid_w=grid_w,
+            grid_h=grid_h,
+            total_beads=total_beads,
+            palette_name=palette_name
+        )
+
+
+        if success:
+            return save_path
+        return None
+
+    def export_color_list_pdf(self, color_stats, total_beads, palette_name, filename=None):
+        """
+        仅导出颜色清单 PDF
+        """
+        if filename is None:
+            filename = f"color_list_{palette_name}.pdf"
+
+        save_path = os.path.join(self.output_dir, filename)
+
+        success = self.pdf_exporter.export_color_list_only(
+            output_path=save_path,
+            color_stats=color_stats,
+            total_beads=total_beads,
+            palette_name=palette_name
+        )
+
+        if success:
+            return save_path
+        return None

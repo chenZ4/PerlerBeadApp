@@ -1,11 +1,15 @@
 import os
 
+import math
+
+
 class ColorPalette:
     def __init__(self, palette_name="basic"):
         self.palette_name = palette_name
         self.colors = []
         self.names = []
         self.codes = []
+        self._color_tree = None  # 缓存 KD-Tree
         self.load_palette(palette_name)
 
     def _rgb_to_hex(self, rgb):
@@ -200,8 +204,34 @@ class ColorPalette:
             self.names = ["黑", "白"]
             self.codes = ["X1", "X2"]
 
-    def find_closest_color(self, r, g, b):
-        """找到色卡中最接近的颜色（优化版）"""
+    def find_closest_color(self, r, g, b, method="euclidean"):
+        """
+        找到色卡中最接近的颜色（优化版）
+
+        Args:
+            r, g, b: 目标颜色 RGB 值
+            method: 匹配算法
+                - "euclidean": 欧几里得距离（默认，速度快）
+                - "weighted": 加权距离（考虑人眼敏感度）
+                - "cie76": CIE76 色差公式（更准确）
+                - "cie94": CIE94 色差公式（工业标准）
+
+        Returns:
+            tuple: (RGB, 名称，色号，索引)
+        """
+        if method == "euclidean":
+            return self._find_closest_euclidean(r, g, b)
+        elif method == "weighted":
+            return self._find_closest_weighted(r, g, b)
+        elif method == "cie76":
+            return self._find_closest_cie76(r, g, b)
+        elif method == "cie94":
+            return self._find_closest_cie94(r, g, b)
+        else:
+            return self._find_closest_euclidean(r, g, b)
+
+    def _find_closest_euclidean(self, r, g, b):
+        """欧几里得距离（原算法，速度最快）"""
         min_dist = float('inf')
         closest_index = 0
 
@@ -212,10 +242,156 @@ class ColorPalette:
                 min_dist = dist
                 closest_index = i
 
-        return (self.colors[closest_index],
-                self.names[closest_index],
-                self.codes[closest_index],
-                closest_index)
+        return (
+            self.colors[closest_index],
+            self.names[closest_index] if closest_index < len(self.names) else "未知",
+            self.codes[closest_index] if closest_index < len(self.codes) else "X0",
+            closest_index
+        )
+
+    def _find_closest_weighted(self, r, g, b):
+        """
+        加权欧几里得距离
+        考虑人眼对不同颜色的敏感度（绿色最敏感，蓝色最不敏感）
+        """
+        min_dist = float('inf')
+        closest_index = 0
+
+        # 人眼敏感度权重
+        w_r, w_g, w_b = 0.299, 0.587, 0.114
+
+        for i, color in enumerate(self.colors):
+            cr, cg, cb = color
+            dr = (r - cr) * w_r
+            dg = (g - cg) * w_g
+            db = (b - cb) * w_b
+            dist = dr ** 2 + dg ** 2 + db ** 2
+
+            if dist < min_dist:
+                min_dist = dist
+                closest_index = i
+
+        return (
+            self.colors[closest_index],
+            self.names[closest_index] if closest_index < len(self.names) else "未知",
+            self.codes[closest_index] if closest_index < len(self.codes) else "X0",
+            closest_index
+        )
+
+    def _rgb_to_lab(self, r, g, b):
+        """
+        RGB 转 CIELAB 颜色空间
+        用于更准确的色差计算
+        """
+
+        # RGB 转 XYZ
+        def pivot(n):
+            n = n / 255.0
+            if n > 0.04045:
+                return ((n + 0.055) / 1.055) ** 2.4
+            else:
+                return n / 12.92
+
+        r, g, b = pivot(r), pivot(g), pivot(b)
+
+        x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375
+        y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750
+        z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041
+
+        # XYZ 转 LAB
+        def f(t):
+            if t > 0.008856:
+                return t ** (1 / 3)
+            else:
+                return (903.3 * t + 16) / 116
+
+        xn, yn, zn = 0.95047, 1.0, 1.08883
+        fx, fy, fz = f(x / xn), f(y / yn), f(z / zn)
+
+        L = 116 * fy - 16
+        a = 500 * (fx - fy)
+        b_val = 200 * (fy - fz)
+
+        return L, a, b_val
+
+    def _find_closest_cie76(self, r, g, b):
+        """
+        CIE76 色差公式
+        基于 CIELAB 颜色空间的欧几里得距离
+        比 RGB 距离更符合人眼感知
+        """
+        target_lab = self._rgb_to_lab(r, g, b)
+
+        min_dist = float('inf')
+        closest_index = 0
+
+        for i, color in enumerate(self.colors):
+            cr, cg, cb = color
+            lab = self._rgb_to_lab(cr, cg, cb)
+
+            # CIE76 色差公式
+            dl = target_lab[0] - lab[0]
+            da = target_lab[1] - lab[1]
+            db = target_lab[2] - lab[2]
+            dist = dl ** 2 + da ** 2 + db ** 2
+
+            if dist < min_dist:
+                min_dist = dist
+                closest_index = i
+
+        return (
+            self.colors[closest_index],
+            self.names[closest_index] if closest_index < len(self.names) else "未知",
+            self.codes[closest_index] if closest_index < len(self.codes) else "X0",
+            closest_index
+        )
+
+    def _find_closest_cie94(self, r, g, b):
+        """
+        CIE94 色差公式
+        工业标准，考虑了明度、彩度、色相的权重
+        最准确但计算最慢
+        """
+        target_lab = self._rgb_to_lab(r, g, b)
+        L1, a1, b1 = target_lab
+
+        min_dist = float('inf')
+        closest_index = 0
+
+        # CIE94 参数（图形艺术行业）
+        kL, kC, kH = 1, 1, 1
+        K1, K2 = 0.045, 0.015
+
+        for i, color in enumerate(self.colors):
+            cr, cg, cb = color
+            L2, a2, b2 = self._rgb_to_lab(cr, cg, cb)
+
+            dL = L1 - L2
+            da = a1 - a2
+            db = b1 - b2
+
+            C1 = math.sqrt(a1 ** 2 + b1 ** 2)
+            C2 = math.sqrt(a2 ** 2 + b2 ** 2)
+            dC = C1 - C2
+
+            dH2 = da ** 2 + db ** 2 - dC ** 2
+            dH = math.sqrt(max(0, dH2))
+
+            SC = 1 + K1 * C1
+            SH = 1 + K2 * C1
+
+            dist = (dL / (kL * 1)) ** 2 + (dC / (kC * SC)) ** 2 + (dH / (kH * SH)) ** 2
+
+            if dist < min_dist:
+                min_dist = dist
+                closest_index = i
+
+        return (
+            self.colors[closest_index],
+            self.names[closest_index] if closest_index < len(self.names) else "未知",
+            self.codes[closest_index] if closest_index < len(self.codes) else "X0",
+            closest_index
+        )
 
     def get_color_info(self, index):
         """获取单个颜色的完整信息"""
@@ -228,14 +404,13 @@ class ColorPalette:
             }
         return None
 
-
+    # 全局色卡选项
 PALETTE_OPTIONS = [
-    ("基础 8 色", "basic"),
-    ("哈马 16 色", "hama_16"),
-    ("佩勒 24 色", "perler_24"),
-    ("MARD 221 色", "mard_221"),
+        ("基础 8 色", "basic"),
+        ("哈马 16 色", "hama_16"),
+        ("佩勒 24 色", "perler_24"),
+        ("MARD 221 色", "mard_221"),
 ]
-
 
 def get_palette(palette_name):
     return ColorPalette(palette_name)
