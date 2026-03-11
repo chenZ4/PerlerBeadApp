@@ -29,8 +29,8 @@ def main():
     logger = setup_logging()
     logger.info(f"启动 {APP_NAME} v{VERSION}")
 
-    # 直接导入原有 UI
-    from ui.desktop_ui import DesktopUI
+    # 🔧 修改：从 win_ui.main_window 导入 DesktopUI
+    from ui.win_ui.main_window import DesktopUI
     window = DesktopUI()
     window.show()
 
