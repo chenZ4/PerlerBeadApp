@@ -2,6 +2,7 @@ import os
 
 import math
 
+from scipy.spatial import KDTree
 
 class ColorPalette:
     def __init__(self, palette_name="basic"):
@@ -204,6 +205,9 @@ class ColorPalette:
             self.names = ["黑", "白"]
             self.codes = ["X1", "X2"]
 
+        if self.colors:
+            self._color_tree = KDTree(self.colors)
+
     def find_closest_color(self, r, g, b, method="euclidean"):
         """
         找到色卡中最接近的颜色（优化版）
@@ -231,24 +235,14 @@ class ColorPalette:
             return self._find_closest_euclidean(r, g, b)
 
     def _find_closest_euclidean(self, r, g, b):
-        """欧几里得距离（原算法，速度最快）"""
-        min_dist = float('inf')
-        closest_index = 0
-
-        for i, color in enumerate(self.colors):
-            cr, cg, cb = color
-            dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
-            if dist < min_dist:
-                min_dist = dist
-                closest_index = i
-
+        """使用 KD-Tree 的 O(log N) 搜索替代线性扫描"""
+        dist, closest_index = self._color_tree.query((r, g, b))
         return (
             self.colors[closest_index],
             self.names[closest_index] if closest_index < len(self.names) else "未知",
             self.codes[closest_index] if closest_index < len(self.codes) else "X0",
             closest_index
         )
-
     def _find_closest_weighted(self, r, g, b):
         """
         加权欧几里得距离

@@ -1,125 +1,50 @@
-# ui/win_ui/main_window.py - 完整修复版
+# ui/win_ui/main_window.py - 完整修正版
 import os
 import sys
-import tempfile
+import io
 from pathlib import Path
 from typing import Optional
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QSize
-from PySide6.QtGui import QPixmap, QImage, QFont, QColor, QIcon, QPalette
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer, QBuffer, QIODevice
+from PySide6.QtGui import QPixmap, QImage, QFont, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QSplitter, QPushButton, QComboBox, QLineEdit,
     QSpinBox, QCheckBox, QLabel, QProgressBar, QScrollArea,
     QFrame, QListWidget, QListWidgetItem, QMessageBox,
-    QStatusBar, QColorDialog, QGridLayout
+    QColorDialog, QGridLayout
 )
+from PIL import Image
 from core.processor import ImageProcessor
 from core.history_manager import HistoryManager
 from core.colors import PALETTE_OPTIONS, get_palette
 
 # ==================== 主题样式表 ====================
 LIGHT_THEME = """
-QMainWindow {
-    background-color: #FFFFFF;
-    color: #000000;
-}
-QFrame {
-    background-color: #FFFFFF;
-    border: 1px solid #E0E0E0;
-    border-radius: 8px;
-}
-QLabel {
-    color: #000000;
-}
-QPushButton {
-    background-color: #0078D4;
-    color: white;
-    padding: 8px 16px;
-    border-radius: 4px;
-    border: none;
-}
-QPushButton:hover {
-    background-color: #0063B1;
-}
-QPushButton:disabled {
-    background-color: #CCCCCC;
-}
-QComboBox, QSpinBox, QLineEdit {
-    background-color: #FFFFFF;
-    border: 1px solid #CCCCCC;
-    border-radius: 4px;
-    padding: 6px;
-    color: #000000;
-}
-QProgressBar {
-    border: 1px solid #CCCCCC;
-    border-radius: 4px;
-    background-color: #F0F0F0;
-}
-QProgressBar::chunk {
-    background-color: #0078D4;
-}
-QListWidget {
-    background-color: #FFFFFF;
-    border: 1px solid #CCCCCC;
-    border-radius: 4px;
-}
-QListWidget::item:selected {
-    background-color: #0078D4;
-    color: white;
-}
+QMainWindow { background-color: #FFFFFF; color: #000000; }
+QFrame { background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 8px; }
+QLabel { color: #000000; }
+QPushButton { background-color: #0078D4; color: white; padding: 8px 16px; border-radius: 4px; border: none; }
+QPushButton:hover { background-color: #0063B1; }
+QPushButton:disabled { background-color: #CCCCCC; }
+QComboBox, QSpinBox, QLineEdit { background-color: #FFFFFF; border: 1px solid #CCCCCC; border-radius: 4px; padding: 6px; color: #000000; }
+QProgressBar { border: 1px solid #CCCCCC; border-radius: 4px; background-color: #F0F0F0; }
+QProgressBar::chunk { background-color: #0078D4; }
+QListWidget { background-color: #FFFFFF; border: 1px solid #CCCCCC; border-radius: 4px; }
+QListWidget::item:selected { background-color: #0078D4; color: white; }
 """
 
 DARK_THEME = """
-QMainWindow {
-    background-color: #202020;
-    color: #FFFFFF;
-}
-QFrame {
-    background-color: #2D2D2D;
-    border: 1px solid #404040;
-    border-radius: 8px;
-}
-QLabel {
-    color: #FFFFFF;
-}
-QPushButton {
-    background-color: #0078D4;
-    color: white;
-    padding: 8px 16px;
-    border-radius: 4px;
-    border: none;
-}
-QPushButton:hover {
-    background-color: #1A8BE0;
-}
-QPushButton:disabled {
-    background-color: #555555;
-}
-QComboBox, QSpinBox, QLineEdit {
-    background-color: #3D3D3D;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 6px;
-    color: #FFFFFF;
-}
-QProgressBar {
-    border: 1px solid #555555;
-    border-radius: 4px;
-    background-color: #3D3D3D;
-}
-QProgressBar::chunk {
-    background-color: #0078D4;
-}
-QListWidget {
-    background-color: #2D2D2D;
-    border: 1px solid #404040;
-    border-radius: 4px;
-}
-QListWidget::item:selected {
-    background-color: #0078D4;
-    color: white;
-}
+QMainWindow { background-color: #202020; color: #FFFFFF; }
+QFrame { background-color: #2D2D2D; border: 1px solid #404040; border-radius: 8px; }
+QLabel { color: #FFFFFF; }
+QPushButton { background-color: #0078D4; color: white; padding: 8px 16px; border-radius: 4px; border: none; }
+QPushButton:hover { background-color: #1A8BE0; }
+QPushButton:disabled { background-color: #555555; }
+QComboBox, QSpinBox, QLineEdit { background-color: #3D3D3D; border: 1px solid #555555; border-radius: 4px; padding: 6px; color: #FFFFFF; }
+QProgressBar { border: 1px solid #555555; border-radius: 4px; background-color: #3D3D3D; }
+QProgressBar::chunk { background-color: #0078D4; }
+QListWidget { background-color: #2D2D2D; border: 1px solid #404040; border-radius: 4px; }
+QListWidget::item:selected { background-color: #0078D4; color: white; }
 """
 
 
@@ -132,6 +57,7 @@ class ProcessingWorker(QObject):
         super().__init__()
         self.processor = processor
         self.params = params
+        # 移除了所有 UI 相关的 Timer 和 _init_ui 错误绑定
 
     def run(self):
         try:
@@ -259,15 +185,8 @@ class ColorChartDialog(QMainWindow):
         card = QFrame()
         card.setFixedSize(130, 150)
         card.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border: 1px solid #ddd;
-                border-radius: 8px;
-            }
-            QFrame:hover {
-                border: 2px solid #0078D4;
-                background-color: #E8F4FD;
-            }
+            QFrame { background-color: white; border: 1px solid #ddd; border-radius: 8px; }
+            QFrame:hover { border: 2px solid #0078D4; background-color: #E8F4FD; }
         """)
 
         layout = QVBoxLayout(card)
@@ -276,11 +195,7 @@ class ColorChartDialog(QMainWindow):
 
         color_label = QLabel()
         color_label.setFixedSize(100, 50)
-        color_label.setStyleSheet(f"""
-            background-color: {color_info['hex']};
-            border-radius: 5px;
-            border: 1px solid #ccc;
-        """)
+        color_label.setStyleSheet(f"background-color: {color_info['hex']}; border-radius: 5px; border: 1px solid #ccc;")
         layout.addWidget(color_label)
 
         code_label = QLabel(color_info['code'])
@@ -307,8 +222,7 @@ class ColorChartDialog(QMainWindow):
                 break
 
     def _export_csv(self):
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "导出 CSV", "", "CSV 文件 (*.csv)")
+        save_path, _ = QFileDialog.getSaveFileName(self, "导出 CSV", "", "CSV 文件 (*.csv)")
         if save_path:
             try:
                 with open(save_path, 'w', encoding='utf-8-sig') as f:
@@ -328,10 +242,8 @@ class DesktopUI(QMainWindow):
         self.setWindowTitle("🎨 拼豆图纸生成器")
         self.resize(1400, 900)
 
-        # 🔧 屏幕分辨率检测
         screen = QApplication.primaryScreen().geometry()
         self.screen_width = screen.width()
-        print(f"📺 屏幕分辨率：{self.screen_width}x{screen.height()}")
 
         self.is_dark_theme = False
         self.processor = ImageProcessor()
@@ -343,9 +255,13 @@ class DesktopUI(QMainWindow):
         self.current_image: Optional[QImage] = None
         self.color_stats = {}
         self.total_beads = 0
-        self.preview_timer: Optional[QTimer] = None
         self.is_processing = False
         self.color_chart_window: Optional[ColorChartDialog] = None
+
+        # 预先分配单一计时器，实现输入防抖
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.timeout.connect(self._generate_preview)
 
         self._init_ui()
         self._init_status_bar()
@@ -378,7 +294,6 @@ class DesktopUI(QMainWindow):
         main_layout.addWidget(splitter)
 
     def _create_setting_panel(self) -> QWidget:
-        """⚠️ 修复：只定义一次，包含 PNG + PDF 按钮"""
         panel = QFrame()
         panel.setFrameStyle(QFrame.StyledPanel)
         panel.setMinimumWidth(350)
@@ -470,17 +385,14 @@ class DesktopUI(QMainWindow):
         self.btn_generate.clicked.connect(self._generate_preview)
         layout.addWidget(self.btn_generate)
 
-        # ✅ 修复：导出按钮区域（PNG + PDF 并排）
         export_layout = QHBoxLayout()
-
         self.btn_save_png = QPushButton("💾 保存 PNG")
         self.btn_save_png.clicked.connect(self._save_image)
         export_layout.addWidget(self.btn_save_png)
 
-        self.btn_save_pdf = QPushButton("📄 导出 PDF")  # ✅ 新增 PDF 按钮
-        self.btn_save_pdf.clicked.connect(self._export_pdf)  # ✅ 连接信号
+        self.btn_save_pdf = QPushButton("📄 导出 PDF")
+        self.btn_save_pdf.clicked.connect(self._export_pdf)
         export_layout.addWidget(self.btn_save_pdf)
-
         layout.addLayout(export_layout)
 
         self._add_section_title(layout, "📊 颜色统计")
@@ -512,54 +424,6 @@ class DesktopUI(QMainWindow):
         self._refresh_history()
         return panel
 
-    def _export_pdf(self):
-        """✅ 修复：QImage 转 PIL Image 的正确方式"""
-        if not self.current_image or not hasattr(self, 'color_stats'):
-            QMessageBox.warning(self, "提示", "请先生成预览！")
-            return
-
-        from PIL import Image
-        import tempfile
-        import os
-
-        # ✅ 修复：先保存到临时文件，再读取为 PIL Image
-        temp_path = tempfile.mktemp(suffix='.png')
-        try:
-            self.current_image.save(temp_path)
-            pil_image = Image.open(temp_path).convert('RGB')
-
-            # 选择保存路径
-            save_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "导出 PDF",
-                "perler_pattern.pdf",
-                "PDF Files (*.pdf)"
-            )
-
-            if save_path:
-                try:
-                    pdf_path = self.processor.export_to_pdf(
-                        pattern_image=pil_image,
-                        color_stats=self.color_stats,
-                        grid_w=self.spin_w.value(),
-                        grid_h=self.spin_h.value(),
-                        total_beads=self.total_beads,
-                        palette_name=self._get_palette_internal(),
-                        filename=save_path
-                    )
-
-                    if pdf_path:
-                        QMessageBox.information(self, "成功", f"PDF 已保存至:\n{pdf_path}")
-                    else:
-                        QMessageBox.critical(self, "错误", "PDF 导出失败")
-
-                except Exception as e:
-                    QMessageBox.critical(self, "错误", f"PDF 导出失败:\n{str(e)}")
-        finally:
-            # 清理临时文件
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-
     def _create_preview_panel(self) -> QWidget:
         panel = QFrame()
         panel.setFrameStyle(QFrame.StyledPanel)
@@ -575,30 +439,21 @@ class DesktopUI(QMainWindow):
         self.progress_bar.hide()
         layout.addWidget(self.progress_bar)
 
-        # 🔧 图片预览 - 黑色背景 + 屏幕自适应
         self.image_label = QLabel("请选择图片并生成预览")
         self.image_label.setAlignment(Qt.AlignCenter)
 
         if self.screen_width >= 2560:
-            min_size = 600
-            default_zoom = 900
+            min_size, default_zoom = 600, 900
         elif self.screen_width >= 1920:
-            min_size = 500
-            default_zoom = 600
+            min_size, default_zoom = 500, 600
         else:
-            min_size = 400
-            default_zoom = 400
+            min_size, default_zoom = 400, 400
 
         self.image_label.setMinimumSize(min_size, min_size)
-        self.image_label.setStyleSheet("""
-            background-color: #000000;
-            border: 1px solid #333;
-            border-radius: 8px;
-            color: #FFFFFF;
-        """)
+        self.image_label.setStyleSheet(
+            "background-color: #000000; border: 1px solid #333; border-radius: 8px; color: #FFFFFF;")
         layout.addWidget(self.image_label, 1)
 
-        # 🔧 缩放控制
         zoom_layout = QHBoxLayout()
         zoom_layout.addWidget(QLabel("预览缩放："))
         self.spin_zoom = QSpinBox()
@@ -645,13 +500,11 @@ class DesktopUI(QMainWindow):
             self.color_chart_window._load_colors()
 
     def _select_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择图片", "", "Image Files (*.jpg *.png *.jpeg *.bmp)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Image Files (*.jpg *.png *.jpeg *.bmp)")
         if file_path:
             self.selected_file = file_path
             self.lbl_file.setText(Path(file_path).name)
             self.lbl_file.setStyleSheet("color: black")
-            from PIL import Image
             try:
                 with Image.open(file_path) as img:
                     w, h = img.size
@@ -680,17 +533,11 @@ class DesktopUI(QMainWindow):
         self._trigger_preview()
 
     def _trigger_preview(self):
-        if self.preview_timer:
-            self.preview_timer.stop()
-        self.preview_timer = QTimer(self)
-        self.preview_timer.setSingleShot(True)
-        self.preview_timer.timeout.connect(self._generate_preview)
+        # 静态逻辑校验：再次调用 start() 即可重置倒计时实现防抖
         self.preview_timer.start(500)
 
     def _generate_preview(self):
         if self.is_processing or not self.selected_file:
-            if not self.selected_file:
-                QMessageBox.warning(self, "提示", "请先选择图片！")
             return
 
         self.is_processing = True
@@ -732,8 +579,7 @@ class DesktopUI(QMainWindow):
         if img_obj:
             img_obj = img_obj.convert('RGB')
             data = img_obj.tobytes()
-            qimage = QImage(data, img_obj.width, img_obj.height,
-                            img_obj.width * 3, QImage.Format_RGB888)
+            qimage = QImage(data, img_obj.width, img_obj.height, img_obj.width * 3, QImage.Format_RGB888)
             self.current_image = qimage
             self.color_stats = color_stats
             self.total_beads = total_beads
@@ -759,9 +605,7 @@ class DesktopUI(QMainWindow):
     def _update_preview_display(self):
         if self.current_image:
             zoom_size = self.spin_zoom.value()
-            scaled = self.current_image.scaled(
-                zoom_size, zoom_size,
-                Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = self.current_image.scaled(zoom_size, zoom_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.image_label.setPixmap(QPixmap.fromImage(scaled))
             self.image_label.setText("")
         else:
@@ -774,47 +618,24 @@ class DesktopUI(QMainWindow):
     def _auto_fit_zoom(self):
         if not self.current_image:
             return
-
         preview_width = self.image_label.width() - 40
         preview_height = self.image_label.height() - 40
+        max_zoom = 1500 if self.screen_width >= 2560 else 1000 if self.screen_width >= 1920 else 800
 
-        if self.screen_width >= 2560:
-            max_zoom = 1500
-        elif self.screen_width >= 1920:
-            max_zoom = 1000
-        else:
-            max_zoom = 800
-
-        img_width = self.current_image.width()
-        img_height = self.current_image.height()
-
-        scale_w = preview_width / img_width
-        scale_h = preview_height / img_height
-        scale = min(scale_w, scale_h, 1.0)
-
-        new_size = int(max(img_width, img_height) * scale)
-        new_size = max(300, min(new_size, max_zoom))
-
-        self.spin_zoom.setValue(new_size)
+        scale = min(preview_width / self.current_image.width(), preview_height / self.current_image.height(), 1.0)
+        new_size = int(max(self.current_image.width(), self.current_image.height()) * scale)
+        self.spin_zoom.setValue(max(300, min(new_size, max_zoom)))
         self._update_preview_display()
 
     def _update_stats_display(self, total_beads, grid_w, grid_h):
         if not self.color_stats:
             return
-
         text = "📊 颜色统计:\n"
-        sorted_stats = sorted(
-            self.color_stats.items(),
-            key=lambda x: x[1]['count'],
-            reverse=True
-        )[:10]
-
+        sorted_stats = sorted(self.color_stats.items(), key=lambda x: x[1]['count'], reverse=True)[:10]
         for code, info in sorted_stats:
             text += f"● {info['code']} {info['name']}: {info['count']}颗\n"
-
         if len(self.color_stats) > 10:
             text += f"... 共 {len(self.color_stats)} 种颜色\n"
-
         text += f"\n总计：{total_beads} 颗豆子 | 网格：{grid_w}×{grid_h}"
         self.lbl_stats.setText(text)
         self.lbl_stats.setStyleSheet("color: black")
@@ -823,70 +644,91 @@ class DesktopUI(QMainWindow):
         if not self.current_image:
             QMessageBox.warning(self, "提示", "请先生成预览！")
             return
-
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存图片", "perler_pattern.png", "PNG Files (*.png)")
+        save_path, _ = QFileDialog.getSaveFileName(self, "保存图片", "perler_pattern.png", "PNG Files (*.png)")
         if save_path:
             self.current_image.save(save_path)
             QMessageBox.information(self, "成功", f"已保存至：{save_path}")
+
+    def _export_pdf(self):
+        if not self.current_image or not hasattr(self, 'color_stats'):
+            QMessageBox.warning(self, "提示", "请先生成预览！")
+            return
+
+        # 机制白盒化：利用内存流实现 Qt 和 PIL 数据交换。
+        # 使用 try...finally 确保 QBuffer 释放，解答上一轮的陷阱题。
+        buffer = QBuffer()
+        buffer.open(QIODevice.ReadWrite)
+        try:
+            self.current_image.save(buffer, "PNG")
+            pil_image = Image.open(io.BytesIO(buffer.data().data())).convert('RGB')
+        finally:
+            buffer.close()
+
+        save_path, _ = QFileDialog.getSaveFileName(self, "导出 PDF", "perler_pattern.pdf", "PDF Files (*.pdf)")
+        if save_path:
+            try:
+                pdf_path = self.processor.export_to_pdf(
+                    pattern_image=pil_image,
+                    color_stats=self.color_stats,
+                    grid_w=self.spin_w.value(),
+                    grid_h=self.spin_h.value(),
+                    total_beads=self.total_beads,
+                    palette_name=self._get_palette_internal(),
+                    filename=save_path
+                )
+                if pdf_path:
+                    QMessageBox.information(self, "成功", f"PDF 已保存至:\n{pdf_path}")
+                else:
+                    QMessageBox.critical(self, "错误", "PDF 导出失败")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"PDF 导出失败:\n{str(e)}")
 
     def _select_grid_color(self):
         color = QColor(self.btn_grid_color.text())
         dialog = QColorDialog(color, self)
         if dialog.exec():
-            new_color = dialog.selectedColor()
-            self.btn_grid_color.setText(new_color.name())
+            self.btn_grid_color.setText(dialog.selectedColor().name())
             self._trigger_preview()
 
     def _open_color_chart(self):
-        palette_name = self._get_palette_internal()
         if self.color_chart_window is None:
-            self.color_chart_window = ColorChartDialog(
-                self, palette_name, is_dark_theme=self.is_dark_theme)
+            self.color_chart_window = ColorChartDialog(self, self._get_palette_internal(),
+                                                       is_dark_theme=self.is_dark_theme)
         self.color_chart_window.show()
         self.color_chart_window.activateWindow()
         self.color_chart_window.raise_()
 
     def _get_palette_internal(self) -> str:
-        display_name = self.combo_palette.currentText()
         for display, internal in PALETTE_OPTIONS:
-            if display == display_name:
+            if display == self.combo_palette.currentText():
                 return internal
         return "mard_221"
 
     def _hex_to_rgb(self, hex_color: str) -> tuple:
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+        return tuple(int(hex_color.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4))
 
     def _refresh_history(self):
         self.history_list.clear()
         for i, record in enumerate(self.history_mgr.get_list()):
-            text = f"[{i}] {record['time']} - {record['width']}x{record['height']} ({record['palette']})"
-            item = QListWidgetItem(text)
-            self.history_list.addItem(item)
+            self.history_list.addItem(
+                QListWidgetItem(f"[{i}] {record['time']} - {record['width']}x{record['height']} ({record['palette']})"))
 
     def _clear_history(self):
-        reply = QMessageBox.question(
-            self, "确认", "确定要清除所有历史记录吗？",
-            QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
+        if QMessageBox.question(self, "确认", "确定要清除所有历史记录吗？",
+                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.history_mgr.clear_history()
             self._refresh_history()
             self.statusBar().showMessage("历史记录已清空", 3000)
 
     def _load_selected_history(self):
         current = self.history_list.currentRow()
-        if current < 0:
-            QMessageBox.warning(self, "提示", "请先选择一条历史记录")
-            return
+        if current < 0: return QMessageBox.warning(self, "提示", "请先选择一条历史记录")
 
         record = self.history_mgr.get_record(current)
-        if not record:
-            return
+        if not record: return
 
         if not os.path.exists(record['image_path']):
-            QMessageBox.error(self, "错误", "原图片已不存在")
-            return
+            return QMessageBox.error(self, "错误", "原图片已不存在")
 
         self.selected_file = record['image_path']
         self.lbl_file.setText(os.path.basename(record['image_path']))
@@ -907,12 +749,10 @@ class DesktopUI(QMainWindow):
         self._load_selected_history()
 
 
-# ==================== 启动入口 ====================
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    font = QFont("Microsoft YaHei", 10)
-    app.setFont(font)
+    app.setFont(QFont("Microsoft YaHei", 10))
     window = DesktopUI()
     window.show()
     sys.exit(app.exec())

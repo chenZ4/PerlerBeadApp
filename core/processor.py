@@ -37,7 +37,14 @@ class ImageProcessor:
                       show_grid=True, grid_color=(200, 200, 200), grid_width=1,
                       palette_name="mard_221", show_color_legend=True,
                       show_row_col_labels=True):
-        """生成专业拼豆图纸 - 核心处理逻辑"""
+        """
+        生成专业拼豆图纸 - 高清晰度优化版
+        
+        核心优化：
+        1. 增大默认画布尺寸，确保字体清晰
+        2. 优化字体大小计算，保证可读性
+        3. 使用更高质量的渲染参数
+        """
         try:
             img = Image.open(image_path).convert("RGB")
             orig_w, orig_h = img.size
@@ -81,15 +88,17 @@ class ImageProcessor:
 
             total_beads = sum(info['count'] for info in color_stats.values())
 
-            # 4. 计算画布尺寸
-            cell_size = canvas_size // max(final_grid_w, final_grid_h)
+            # 4. 计算画布尺寸 - 🔥 高清晰度优化
+            # 基础 cell 尺寸至少保证字体清晰可见
+            base_cell_size = max(20, canvas_size // max(final_grid_w, final_grid_h))
+            cell_size = base_cell_size
             draw_width = cell_size * final_grid_w
             draw_height = cell_size * final_grid_h
 
-            # 5. 计算行列标号区域大小
+            # 5. 计算行列标号区域大小 - 🔥 增加边距以容纳更大字体
             label_margin = 0
             if show_row_col_labels:
-                label_margin = 35  # 每边预留 35px
+                label_margin = max(40, int(cell_size * 0.6))  # 根据单元格大小动态调整
 
             # 6. 计算图例区域
             legend_height = 0
@@ -130,10 +139,11 @@ class ImageProcessor:
                     if show_grid:
                         draw.rectangle([x1, y1, x2, y2], outline=grid_color, width=grid_width)
 
-                    # 显示色号字母
+                    # 显示色号字母 - 🔥 优化字体大小计算
                     if cell_size >= 12:
                         code = grid_codes[y][x]
-                        font_size = max(6, min(cell_size // 3, 18))
+                        # 字体大小与单元格大小成正比，最小 8pt，最大不超过单元格的 40%
+                        font_size = max(8, min(int(cell_size * 0.35), 20))
                         font = self._get_font(font_size)
 
                         bbox = draw.textbbox((0, 0), code, font=font)
@@ -162,30 +172,31 @@ class ImageProcessor:
                     item_x = 20 + col * item_width
                     item_y = legend_y + row * 70
 
-                    block_size = min(45, item_width - 15)
+                    block_size = min(50, max(40, item_width - 20))  # 增大色块尺寸
                     block_x = item_x + (item_width - block_size) // 2
 
                     draw.rounded_rectangle(
                         [block_x, item_y, block_x + block_size, item_y + block_size],
-                        radius=5, fill=info['rgb'], outline=(200, 200, 200), width=1
+                        radius=5, fill=info['rgb'], outline=(200, 200, 200), width=2
                     )
 
-                    font_small = self._get_font(11)
-                    font_normal = self._get_font(13)
+                    # 🔥 增大图例字体以提高清晰度
+                    font_small = self._get_font(12)
+                    font_normal = self._get_font(15)
 
-                    text_x = block_x + block_size + 8
+                    text_x = block_x + block_size + 10
                     draw.text((text_x, item_y + 5), f"{code}", fill=(0, 0, 0), font=font_small)
-                    draw.text((text_x, item_y + 22), f"{info['count']}颗", fill=(100, 100, 100), font=font_small)
-                    draw.text((text_x, item_y + 40), f"{info['name']}", fill=(50, 50, 50), font=font_normal)
+                    draw.text((text_x, item_y + 24), f"{info['count']}颗", fill=(100, 100, 100), font=font_small)
+                    draw.text((text_x, item_y + 42), f"{info['name']}", fill=(50, 50, 50), font=font_normal)
 
-                # 底部耗材量显示
+                # 底部耗材量显示 - 🔥 增大标题字体
                 footer_y = legend_y + legend_rows * 70 + 20
 
                 draw.line([(100, footer_y), (total_width - 100, footer_y)], fill=(220, 220, 220), width=2)
 
-                font_title = self._get_font(24, bold=True)
-                font_count = self._get_font(36, bold=True)
-                font_unit = self._get_font(18)
+                font_title = self._get_font(28, bold=True)  # 从 24 增加到 28
+                font_count = self._get_font(42, bold=True)  # 从 36 增加到 42
+                font_unit = self._get_font(20)  # 从 18 增加到 20
 
                 title_text = "本次拼豆所需耗材总量"
                 count_text = str(total_beads)
@@ -210,16 +221,16 @@ class ImageProcessor:
                 draw.text((start_text_x + count_w + 8, footer_y + 60), unit_text, fill=(100, 100, 100), font=font_unit)
 
                 info_text = f"网格尺寸：{final_grid_w} × {final_grid_h} 颗  |  画布：{total_width} × {total_height} px"
-                info_font = self._get_font(14)
+                info_font = self._get_font(16)  # 从 14 增加到 16
                 info_bbox = draw.textbbox((0, 0), info_text, font=info_font)
                 info_w = info_bbox[2] - info_bbox[0]
                 info_x = (total_width - info_w) // 2
                 draw.text((info_x, footer_y + 100), info_text, fill=(120, 120, 120), font=info_font)
 
-            # 13. 保存
+            # 13. 保存 - 🔥 使用最高质量保存
             filename = f"perler_{final_grid_w}x{final_grid_h}_{palette_name}.png"
             save_path = os.path.join(self.output_dir, filename)
-            final_img.save(save_path, quality=95)
+            final_img.save(save_path, quality=100, dpi=(300, 300))  # 高质量 + 高 DPI
 
             return save_path, final_img, color_stats, total_beads, final_grid_w, final_grid_h
 
