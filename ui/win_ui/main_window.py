@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter, QPushButton, QComboBox, QLineEdit,
     QSpinBox, QCheckBox, QLabel, QProgressBar, QScrollArea,
     QFrame, QListWidget, QListWidgetItem, QMessageBox,
-    QColorDialog, QGridLayout, QProgressDialog
+    QColorDialog, QGridLayout, QProgressDialog, QSizePolicy
 )
 from PIL import Image
 from core.processor import ImageProcessor
@@ -225,10 +225,19 @@ class DesktopUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("🎨 拼豆图纸生成器")
-        self.resize(1400, 900)
-
+        
+        # 根据屏幕尺寸自适应窗口大小
         screen = QApplication.primaryScreen().geometry()
         self.screen_width = screen.width()
+        self.screen_height = screen.height()
+        
+        # 设置合适的初始窗口尺寸（占屏幕的 85%）
+        window_width = int(screen.width() * 0.85)
+        window_height = int(screen.height() * 0.85)
+        self.resize(window_width, window_height)
+        
+        # 设置最小窗口尺寸，防止过度压缩
+        self.setMinimumSize(1000, 700)
 
         self.is_dark_theme = False
         self.processor = ImageProcessor()
@@ -260,11 +269,11 @@ class DesktopUI(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
         toolbar = QHBoxLayout()
-        title = QLabel("🎨 拼豆图纸生成器 Pro")
+        title = QLabel("🎨 拼豆图纸生成器")
         title.setStyleSheet("font-size: 18px; font-weight: bold")
         toolbar.addWidget(title)
         toolbar.addStretch()
@@ -278,21 +287,33 @@ class DesktopUI(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         scroll_panel = QScrollArea()
         scroll_panel.setWidgetResizable(True)
+        scroll_panel.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_panel.setWidget(self._create_setting_panel())
 
         splitter.addWidget(scroll_panel)
         splitter.addWidget(self._create_preview_panel())
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)  # 给予预览区更大权重
+        # 初始比例设为 25:75，让预览区占据更多空间
+        splitter.setStretchFactor(0, 25)
+        splitter.setStretchFactor(1, 75)
         main_layout.addWidget(splitter)
+        
+        # 设置初始分割器比例（左侧占窗口宽度的 25%）
+        QTimer.singleShot(100, lambda: self._init_splitter_size(splitter))
 
+    def _init_splitter_size(self, splitter):
+        """初始化分割器尺寸比例"""
+        total_width = self.width()
+        left_width = int(total_width * 0.28)  # 左侧占 28%
+        right_width = total_width - left_width
+        splitter.setSizes([left_width, right_width])
+    
     def _create_setting_panel(self) -> QWidget:
         panel = QFrame()
-        panel.setMinimumWidth(360)
-        panel.setMaximumWidth(420)
+        # 不设置固定宽度，让内容自适应
+        panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
 
         self._add_section_title(layout, "📁 图片源 (支持多选批量)")
         self.btn_select = QPushButton("选择图片...")
@@ -304,58 +325,67 @@ class DesktopUI(QMainWindow):
         self.lbl_file.setStyleSheet("color: gray")
         layout.addWidget(self.lbl_file)
 
-        # ✂️ 新增：局部裁剪面板
+        # ✂️ 新增：局部裁剪面板 - 使用网格布局更紧凑
         self._add_section_title(layout, "✂️ 局部裁剪 (像素)")
-        crop_layout1 = QHBoxLayout()
-        self.spin_crop_x = QSpinBox();
+        crop_grid = QGridLayout()
+        crop_grid.setSpacing(5)
+        
+        self.spin_crop_x = QSpinBox()
         self.spin_crop_x.setRange(0, 9999)
-        self.spin_crop_y = QSpinBox();
+        self.spin_crop_x.setToolTip("起始 X 坐标")
+        self.spin_crop_y = QSpinBox()
         self.spin_crop_y.setRange(0, 9999)
-        crop_layout1.addWidget(QLabel("X:"))
-        crop_layout1.addWidget(self.spin_crop_x)
-        crop_layout1.addWidget(QLabel("Y:"))
-        crop_layout1.addWidget(self.spin_crop_y)
-        layout.addLayout(crop_layout1)
-
-        crop_layout2 = QHBoxLayout()
-        self.spin_crop_w = QSpinBox();
+        self.spin_crop_y.setToolTip("起始 Y 坐标")
+        
+        crop_grid.addWidget(QLabel("X:"), 0, 0)
+        crop_grid.addWidget(self.spin_crop_x, 0, 1)
+        crop_grid.addWidget(QLabel("Y:"), 0, 2)
+        crop_grid.addWidget(self.spin_crop_y, 0, 3)
+        
+        self.spin_crop_w = QSpinBox()
         self.spin_crop_w.setRange(0, 9999)
-        self.spin_crop_h = QSpinBox();
-        self.spin_crop_h.setRange(0, 9999)
         self.spin_crop_w.setToolTip("输入 0 表示不裁剪该维度")
+        self.spin_crop_h = QSpinBox()
+        self.spin_crop_h.setRange(0, 9999)
         self.spin_crop_h.setToolTip("输入 0 表示不裁剪该维度")
-        crop_layout2.addWidget(QLabel("宽:"))
-        crop_layout2.addWidget(self.spin_crop_w)
-        crop_layout2.addWidget(QLabel("高:"))
-        crop_layout2.addWidget(self.spin_crop_h)
-        layout.addLayout(crop_layout2)
-
+        
+        crop_grid.addWidget(QLabel("宽:"), 1, 0)
+        crop_grid.addWidget(self.spin_crop_w, 1, 1)
+        crop_grid.addWidget(QLabel("高:"), 1, 2)
+        crop_grid.addWidget(self.spin_crop_h, 1, 3)
+        
+        layout.addLayout(crop_grid)
+        
         self.spin_crop_x.valueChanged.connect(self._trigger_preview)
         self.spin_crop_y.valueChanged.connect(self._trigger_preview)
         self.spin_crop_w.valueChanged.connect(self._trigger_preview)
         self.spin_crop_h.valueChanged.connect(self._trigger_preview)
 
         self._add_section_title(layout, "📐 网格设置")
-        layout.addWidget(QLabel("画布比例："))
+        layout.addWidget(QLabel("画布比例:"))
         self.combo_ratio = QComboBox()
+        self.combo_ratio.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.combo_ratio.addItems(["原始比例", "1:1 (正方形)", "4:3", "3:4", "16:9", "9:16"])
         self.combo_ratio.currentTextChanged.connect(self._on_ratio_change)
         layout.addWidget(self.combo_ratio)
-
-        grid_layout = QHBoxLayout()
-        grid_layout.addWidget(QLabel("宽 (颗): "))
+        
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(5)
+        grid_layout.addWidget(QLabel("宽 (颗):"), 0, 0)
         self.spin_w = QSpinBox()
         self.spin_w.setRange(10, 500)
         self.spin_w.setValue(50)
+        self.spin_w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.spin_w.valueChanged.connect(self._trigger_preview)
-        grid_layout.addWidget(self.spin_w)
-
-        grid_layout.addWidget(QLabel("高 (颗): "))
+        grid_layout.addWidget(self.spin_w, 0, 1)
+                
+        grid_layout.addWidget(QLabel("高 (颗):"), 0, 2)
         self.spin_h = QSpinBox()
         self.spin_h.setRange(10, 500)
         self.spin_h.setValue(50)
+        self.spin_h.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.spin_h.valueChanged.connect(self._trigger_preview)
-        grid_layout.addWidget(self.spin_h)
+        grid_layout.addWidget(self.spin_h, 0, 3)
         layout.addLayout(grid_layout)
 
         self._add_section_title(layout, "🎨 色卡选择")
@@ -394,36 +424,47 @@ class DesktopUI(QMainWindow):
         layout.addWidget(self.chk_grid)
 
         grid_color_layout = QHBoxLayout()
-        grid_color_layout.addWidget(QLabel("网格颜色："))
+        grid_color_layout.setSpacing(5)
+        grid_color_layout.addWidget(QLabel("网格颜色:"))
         self.btn_grid_color = QPushButton("#C8C8C8")
-        self.btn_grid_color.setFixedWidth(100)
+        self.btn_grid_color.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.btn_grid_color.clicked.connect(self._select_grid_color)
         grid_color_layout.addWidget(self.btn_grid_color)
         layout.addLayout(grid_color_layout)
 
         layout.addStretch()
+        
+        # 添加颜色统计标题，让按钮区域更清晰
+        self._add_section_title(layout, "⚙️ 操作区")
 
-        # 生成与批量处理控制区
-        btn_action_layout = QHBoxLayout()
+        # 生成预览按钮
         self.btn_generate = QPushButton("🔄 生成预览")
+        self.btn_generate.setMinimumHeight(40)
+        self.btn_generate.setStyleSheet("font-weight: bold;")
         self.btn_generate.clicked.connect(self._generate_preview)
-        btn_action_layout.addWidget(self.btn_generate)
+        layout.addWidget(self.btn_generate)
 
+        # 批量处理按钮
         self.btn_batch = QPushButton("🚀 批量处理")
-        self.btn_batch.setStyleSheet("background-color: #28a745;")
+        self.btn_batch.setMinimumHeight(40)
+        self.btn_batch.setStyleSheet("background-color: #28a745; font-weight: bold;")
         self.btn_batch.clicked.connect(self._run_batch)
-        btn_action_layout.addWidget(self.btn_batch)
-        layout.addLayout(btn_action_layout)
-
-        export_layout = QHBoxLayout()
+        layout.addWidget(self.btn_batch)
+        
+        # 导出按钮区域
+        self._add_section_title(layout, "💾 导出选项")
+        
+        # 保存 PNG 按钮
         self.btn_save_png = QPushButton("💾 保存 PNG")
+        self.btn_save_png.setMinimumHeight(35)
         self.btn_save_png.clicked.connect(self._save_image)
-        export_layout.addWidget(self.btn_save_png)
+        layout.addWidget(self.btn_save_png)
 
+        # 导出 PDF 按钮
         self.btn_save_pdf = QPushButton("📄 导出 PDF")
+        self.btn_save_pdf.setMinimumHeight(35)
         self.btn_save_pdf.clicked.connect(self._export_pdf)
-        export_layout.addWidget(self.btn_save_pdf)
-        layout.addLayout(export_layout)
+        layout.addWidget(self.btn_save_pdf)
 
         self._add_section_title(layout, "📊 颜色统计")
         self.lbl_stats = QLabel("生成后显示")
@@ -436,8 +477,8 @@ class DesktopUI(QMainWindow):
     def _create_preview_panel(self) -> QWidget:
         panel = QFrame()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
         title = QLabel("🖼️ 实时预览 (支持滚轮缩放)")
         title.setStyleSheet("font-size: 16px; font-weight: bold")
@@ -450,20 +491,23 @@ class DesktopUI(QMainWindow):
         self.image_label = QLabel("请选择图片并生成预览")
         self.image_label.setAlignment(Qt.AlignCenter)
 
+        # 根据屏幕尺寸设置合理的默认值
         if self.screen_width >= 2560:
-            min_size, default_zoom = 600, 900
+            min_size, default_zoom = 700, 1000
         elif self.screen_width >= 1920:
-            min_size, default_zoom = 500, 600
+            min_size, default_zoom = 550, 700
         else:
-            min_size, default_zoom = 400, 400
+            min_size, default_zoom = 450, 500
 
         self.image_label.setMinimumSize(min_size, min_size)
         self.image_label.setStyleSheet(
             "background-color: #000000; border: 1px solid #333; border-radius: 8px; color: #FFFFFF;")
+        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # 将 image_label 包装入 ScrollArea 支持超大图片漫游
         self.img_scroll = QScrollArea()
         self.img_scroll.setWidgetResizable(True)
+        self.img_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.img_scroll.setWidget(self.image_label)
         layout.addWidget(self.img_scroll, 1)
 
@@ -603,9 +647,25 @@ class DesktopUI(QMainWindow):
         if not self.selected_files or len(self.selected_files) < 2:
             QMessageBox.warning(self, "提示", "请选择至少 2 张图片组成序列进行批量处理！")
             return
-
+        
+        # 让用户选择输出目录
+        output_dir = QFileDialog.getExistingDirectory(
+            self, 
+            "选择批量输出文件夹",
+            "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if not output_dir:
+            return  # 用户取消选择
+        
         params = self._build_processor_params("")  # 占位，内部会重写 image_path
         params.pop('image_path', None)
+        
+        # 临时修改 processor 的输出目录
+        original_output_dir = self.processor.output_dir
+        self.processor.output_dir = output_dir
+        
         # 建立模态进度对话框
         self.progress_dlg = QProgressDialog("启动批量引擎...", "取消", 0, len(self.selected_files), self)
         self.progress_dlg.setWindowTitle("批量处理中")
@@ -619,7 +679,7 @@ class DesktopUI(QMainWindow):
 
         # 信号绑定
         self.batch_worker.progress.connect(self._on_batch_progress)
-        self.batch_worker.finished.connect(self._on_batch_finished)
+        self.batch_worker.finished.connect(lambda results: self._on_batch_finished(results, original_output_dir))
         self.batch_worker.error.connect(self._on_processing_error)
         self.progress_dlg.canceled.connect(self.batch_thread.quit)  # 允许打断
 
@@ -630,11 +690,15 @@ class DesktopUI(QMainWindow):
         self.progress_dlg.setLabelText(f"正在处理 [{current}/{total}]:\n{os.path.basename(last_file)}")
         self.progress_dlg.setValue(current)
 
-    def _on_batch_finished(self, results):
+    def _on_batch_finished(self, results, original_output_dir):
         self.batch_thread.quit()
         success_count = sum(1 for r in results if r.get('status') == 'success')
+            
+        # 恢复原始输出目录
+        self.processor.output_dir = original_output_dir
+            
         QMessageBox.information(self, "批量完成",
-                                f"队列执行完毕！\n成功: {success_count} \n失败: {len(results) - success_count}\n文件保存在 output 目录。")
+                                f"队列执行完毕！\n成功：{success_count} \n失败：{len(results) - success_count}\n文件已保存到您选择的文件夹。")
         self._generate_preview()  # 刷新当前预览
 
     def _on_processing_finished(self, result):
