@@ -1,27 +1,40 @@
 # core/colors.py
 
 class ColorPalette:
-    def _rgb_to_hex(self, rgb):
-        """RGB 转 HEX"""
-        return '#{:02X}{:02X}{:02X}'.format(*rgb)
-
-    @property
-    def hex_codes(self):
-        """动态生成 HEX 颜色码列表"""
-        return [self._rgb_to_hex(rgb) for rgb in self.colors]
-
-    def load_palette(self, palette_name):
-        """拼豆色卡 - 带色号字母"""
-
     def __init__(self, palette_name="basic"):
         self.palette_name = palette_name
         self.colors = []
         self.names = []
         self.codes = []
         self.load_palette(palette_name)
+        self._hex_codes = [self._rgb_to_hex(rgb) for rgb in self.colors]
+
+    def _rgb_to_hex(self, rgb):
+        """RGB 转 HEX"""
+        return '#{:02X}{:02X}{:02X}'.format(*rgb)
+
+    @property
+    def hex_codes(self):
+        """HEX 颜色码列表（预计算缓存）"""
+        return self._hex_codes
+
+    def closest_indices(self, pil_img):
+        """numpy 向量化最近色匹配，返回 (H,W) 色卡索引数组，零误差"""
+        import numpy as np
+        colors = np.asarray(self.colors, dtype=np.int32)
+        arr = np.asarray(pil_img, dtype=np.int32)
+        h, w, _ = arr.shape
+        flat = arr.reshape(-1, 3)
+        out = np.empty(flat.shape[0], dtype=np.int32)
+        step = 8192
+        for start in range(0, flat.shape[0], step):
+            chunk = flat[start:start + step]
+            diff = chunk[:, None, :] - colors[None, :, :]
+            out[start:start + chunk.shape[0]] = (diff * diff).sum(-1).argmin(-1)
+        return out.reshape(h, w)
 
     def load_palette(self, palette_name):
-        """加载不同厂商的色卡"""
+        """拼豆色卡 - 带色号字母"""
 
         if palette_name == "basic":
             self.colors = [(0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0),
@@ -205,7 +218,7 @@ class ColorPalette:
             self.codes = ["X1", "X2"]
 
     def find_closest_color(self, r, g, b):
-        """找到色卡中最接近的颜色（优化版）"""
+        """找到色卡中最接近的颜色（暴力法，备用路径）"""
         min_dist = float('inf')
         closest_index = 0
 
@@ -221,15 +234,6 @@ class ColorPalette:
                 self.codes[closest_index],
                 closest_index)
 
-    def _rgb_to_hex(self, rgb):
-        """RGB 转 HEX"""
-        return '#{:02X}{:02X}{:02X}'.format(*rgb)
-
-    @property
-    def hex_codes(self):
-        """动态生成 HEX 颜色码列表"""
-        return [self._rgb_to_hex(rgb) for rgb in self.colors]
-
     def get_color_info(self, index):
         """获取单个颜色的完整信息"""
         if 0 <= index < len(self.colors):
@@ -240,20 +244,6 @@ class ColorPalette:
                 'hex': self.hex_codes[index]
             }
         return None
-
-    # core/colors.py - 在 ColorPalette 类末尾添加
-
-    class ColorPalette:
-        # ... 现有代码保持不变 ...
-
-        def _rgb_to_hex(self, rgb):
-            """RGB 转 HEX"""
-            return '#{:02X}{:02X}{:02X}'.format(*rgb)
-
-        @property
-        def hex_codes(self):
-            """动态生成 HEX 颜色码列表"""
-            return [self._rgb_to_hex(rgb) for rgb in self.colors]
 
 PALETTE_OPTIONS = [
     ("基础 8 色", "basic"),

@@ -361,3 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# 应用运行数据（输出图片与本地历史记录）
+output/
+history.json
+.DS_Store
+.idea/
+app_settings.json
+queue_state.json

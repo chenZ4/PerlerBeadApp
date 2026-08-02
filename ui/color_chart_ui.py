@@ -1,7 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import Image, ImageDraw
+from PIL import Image
 from core.colors import get_palette, PALETTE_OPTIONS
+from ui.fonts import is_mac, ui_font, mono_font
 
 
 class ColorChartWindow:
@@ -16,6 +17,7 @@ class ColorChartWindow:
         self.window.minsize(1300, 750)
         self.window.transient(parent)
         self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.palette = get_palette(palette_name)
         self.filtered_colors = []
@@ -30,10 +32,20 @@ class ColorChartWindow:
         # 🔧 关键修复：添加加载标志，防止重复加载
         self._is_loading = False
         self._load_completed = False
+        self._last_cols = 0
+        self._search_timer = None
 
         self._setup_ui()
         self._load_colors()
         self._load_completed = True
+        self._last_cols = self._calculate_cols()
+
+    def _on_close(self):
+        try:
+            self.window.grab_release()
+        except tk.TclError:
+            pass
+        self.window.destroy()
 
     def _get_palette_display_name(self):
         for display, internal in PALETTE_OPTIONS:
@@ -57,15 +69,15 @@ class ColorChartWindow:
         title_frame.pack(side=tk.LEFT)
 
         ttk.Label(title_frame, text=f"🎨 {self._get_palette_display_name()}",
-                  font=("Microsoft YaHei", 16, "bold"), foreground="#0078D4").pack(anchor=tk.W)
+                  font=ui_font(16, bold=True), foreground="#0078D4").pack(anchor=tk.W)
 
-        self.lbl_stats = ttk.Label(title_frame, text="", font=("Microsoft YaHei", 10), foreground="#666")
+        self.lbl_stats = ttk.Label(title_frame, text="", font=ui_font(10), foreground="#666")
         self.lbl_stats.pack(anchor=tk.W, pady=(5, 0))
 
         # 色卡切换
         palette_frame = ttk.Frame(header)
         palette_frame.pack(side=tk.LEFT, padx=(30, 0))
-        ttk.Label(palette_frame, text="色卡:", font=("Microsoft YaHei", 10)).pack(side=tk.LEFT)
+        ttk.Label(palette_frame, text="色卡:", font=ui_font(10)).pack(side=tk.LEFT)
         self.palette_combo = ttk.Combobox(palette_frame, values=[n for n, _ in PALETTE_OPTIONS],
                                           state="readonly", width=15)
         self.palette_combo.set(self._get_palette_display_name())
@@ -100,26 +112,42 @@ class ColorChartWindow:
         # 🔧 关键修复：只监听 scroll_frame 的 Configure，不监听 window
         self.scroll_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw")
+        self._canvas_window = self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw")
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.canvas.configure(yscrollcommand=v_scroll.set)
 
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
         v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         # 🔧 关键修复：只绑定 canvas 的滚轮，不用 bind_all
-        self.canvas.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-e.delta / 120), "units"))
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<ButtonPress-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
         self.canvas.bind("<ButtonPress-5>", lambda e: self.canvas.yview_scroll(1, "units"))
 
-        # 🔧 关键修复：移除 window 的 Configure 绑定，避免无限循环
-        # 不再绑定：self.window.bind("<Configure>", self._on_window_resize)
+    def _on_mousewheel(self, event):
+        if is_mac():
+            step = int(-event.delta)
+        else:
+            step = int(-(event.delta / 120))
+        self.canvas.yview_scroll(step, "units")
+
+    def _on_canvas_resize(self, event=None):
+        try:
+            self.canvas.itemconfigure(self._canvas_window, width=event.width)
+        except tk.TclError:
+            return
+        if self._load_completed and not self._is_loading:
+            cols = self._calculate_cols()
+            if cols != self._last_cols:
+                self._last_cols = cols
+                self._load_colors(self.current_filter)
 
     def _create_footer(self, parent):
         footer = ttk.Frame(parent)
         footer.pack(fill=tk.X, pady=(15, 0))
 
         self.status_label = ttk.Label(footer, text=f"✓ 已加载 {len(self.palette.colors)} 种颜色",
-                                      font=("Microsoft YaHei", 9), foreground="#666")
+                                      font=ui_font(9), foreground="#666")
         self.status_label.pack(side=tk.LEFT)
 
     def _load_colors(self, filter_text=""):
@@ -157,7 +185,7 @@ class ColorChartWindow:
 
             if not groups:
                 ttk.Label(self.scroll_frame, text="😕 未找到匹配的颜色",
-                          font=("Microsoft YaHei", 12), foreground="#999").pack(pady=50)
+                          font=ui_font(12), foreground="#999").pack(pady=50)
                 return
 
             for group in sorted(groups.keys()):
@@ -170,12 +198,12 @@ class ColorChartWindow:
         header.pack(fill=tk.X)
 
         toggle_btn = ttk.Label(header, text="▼" if self.group_expanded.get(group_name, True) else "▶",
-                               font=("Microsoft YaHei", 11), cursor="hand2", foreground="#0078D4")
+                               font=ui_font(11), cursor="hand2", foreground="#0078D4")
         toggle_btn.pack(side=tk.LEFT)
         toggle_btn.bind("<Button-1>", lambda e: self._toggle_group(group_name))
 
         ttk.Label(header, text=f"【{group_name}组】{len(colors)}色",
-                  font=("Microsoft YaHei", 12, "bold"), foreground="#333").pack(side=tk.LEFT, padx=5)
+                  font=ui_font(12, bold=True), foreground="#333").pack(side=tk.LEFT, padx=5)
 
         if not self.group_expanded.get(group_name, True):
             return
@@ -196,7 +224,7 @@ class ColorChartWindow:
         """创建单个色卡卡片"""
         card = tk.Frame(parent, width=self.card_width, height=self.card_height,
                         bg="#FFFFFF", relief="raised", borderwidth=1)
-        card.pack(side=tk.LEFT, padx=5, pady=5)
+        card.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=tk.YES)
         card.pack_propagate(False)
 
         color_box = tk.Canvas(card, width=self.card_width - 20, height=self.color_preview_height,
@@ -216,21 +244,21 @@ class ColorChartWindow:
         top_row.pack(fill=tk.X)
 
         code_label = tk.Label(top_row, text=color_info['code'],
-                              font=("Consolas", 12, "bold"), fg="#333", bg="#FFFFFF", anchor=tk.W, width=5)
+                              font=mono_font(12, bold=True), fg="#333", bg="#FFFFFF", anchor=tk.W, width=5)
         code_label.pack(side=tk.LEFT)
 
         name = color_info['name'] if color_info['name'] else '—'
-        name_label = tk.Label(top_row, text=name, font=("Microsoft YaHei", 10),
+        name_label = tk.Label(top_row, text=name, font=ui_font(10),
                               fg="#666", bg="#FFFFFF", anchor=tk.W, wraplength=self.card_width - 60)
         name_label.pack(side=tk.LEFT, padx=(5, 0))
 
         rgb_text = f"RGB({color_info['rgb'][0]}, {color_info['rgb'][1]}, {color_info['rgb'][2]})"
-        rgb_label = tk.Label(info_frame, text=rgb_text, font=("Consolas", 10),
+        rgb_label = tk.Label(info_frame, text=rgb_text, font=mono_font(10),
                              fg="#0078D4", bg="#FFFFFF", anchor=tk.W)
         rgb_label.pack(fill=tk.X, pady=(3, 0))
 
         hex_label = tk.Label(info_frame, text=color_info['hex'].lower(),
-                             font=("Consolas", 9), fg="#999", bg="#FFFFFF", anchor=tk.W)
+                             font=mono_font(9), fg="#999", bg="#FFFFFF", anchor=tk.W)
         hex_label.pack(fill=tk.X, pady=(1, 0))
 
         def on_enter(e):
@@ -256,15 +284,13 @@ class ColorChartWindow:
 
     def _calculate_cols(self):
         try:
-            width = self.window.winfo_width()
-            if width < 1300:
-                return 6
-            elif width < 1500:
+            width = self.scroll_frame.winfo_width()
+            if width < 200:
+                width = self.canvas.winfo_width()
+            if width < 200:
                 return 7
-            elif width < 1700:
-                return 8
-            else:
-                return 9
+            cols = width // (self.card_width + 10)
+            return max(6, min(cols, 9))
         except:
             return 7
 
@@ -273,12 +299,19 @@ class ColorChartWindow:
         self._load_colors(self.current_filter)
 
     def _on_search(self, event=None):
+        if self._search_timer:
+            self.window.after_cancel(self._search_timer)
+        self._search_timer = self.window.after(250, self._do_search)
+
+    def _do_search(self):
         self.current_filter = self.search_var.get().strip()
         self._load_colors(self.current_filter)
 
     def _clear_search(self):
         self.search_var.set("")
         self.current_filter = ""
+        if self._search_timer:
+            self.window.after_cancel(self._search_timer)
         self._load_colors()
 
     def _on_palette_change(self, event=None):
@@ -311,17 +344,25 @@ class ColorChartWindow:
 
     def _export_csv(self):
         from tkinter import filedialog
+        try:
+            self.window.grab_release()
+        except tk.TclError:
+            pass
         save_path = filedialog.asksaveasfilename(defaultextension=".csv",
                                                  filetypes=[("CSV 文件", "*.csv")],
                                                  title="导出颜色数据")
-        if not save_path:
-            return
+        if save_path:
+            try:
+                with open(save_path, 'w', encoding='utf-8-sig') as f:
+                    f.write("色号，颜色名称，R,G,B,HEX\n")
+                    for c in self.filtered_colors:
+                        r, g, b = c['rgb']
+                        f.write(f"{c['code']},{c['name']},{r},{g},{b},{c['hex'].lower()}\n")
+                messagebox.showinfo("✓ 导出成功", f"已保存至:\n{save_path}")
+            except Exception as e:
+                messagebox.showerror("❌ 导出失败", str(e))
         try:
-            with open(save_path, 'w', encoding='utf-8-sig') as f:
-                f.write("色号，颜色名称，R,G,B,HEX\n")
-                for c in self.filtered_colors:
-                    r, g, b = c['rgb']
-                    f.write(f"{c['code']},{c['name']},{r},{g},{b},{c['hex'].lower()}\n")
-            messagebox.showinfo("✓ 导出成功", f"已保存至:\n{save_path}")
-        except Exception as e:
-            messagebox.showerror("❌ 导出失败", str(e))
+            if self.window.winfo_exists():
+                self.window.grab_set()
+        except tk.TclError:
+            pass
