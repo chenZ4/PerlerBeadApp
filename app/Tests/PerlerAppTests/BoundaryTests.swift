@@ -228,19 +228,13 @@ final class BoundaryTests: XCTestCase {
         let dest = NSTemporaryDirectory() + "vm_out.pdf"
         try? FileManager.default.removeItem(atPath: dest)
         vm.exportPDF(to: dest)
-        // 等待 PDF 写入完成（字节头 %PDF）
-        let contentOK = waitFor({
+        // 等待 PDF 完整写入（%PDF 头 + 页对象计数 ≥2）
+        let pagesOK = waitFor({
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: dest)) else { return false }
-            return data.count > 8 && data.prefix(5).elementsEqual(Data("%PDF-".utf8))
+            let text = String(decoding: data, as: UTF8.self)
+            return text.hasPrefix("%PDF-") && text.components(separatedBy: "/Type /Page").count - 1 >= 2
         }, timeout: 30)
-        XCTAssertTrue(contentOK, "PDF 应导出且内容有效")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: dest)) else {
-            XCTFail("无法读取 PDF")
-            return
-        }
-        let text = String(decoding: data, as: UTF8.self)
-        let pages = text.components(separatedBy: "/Type /Page").count - 1
-        XCTAssertGreaterThanOrEqual(pages, 2, "应含 BOM 材料页 + 图纸页（实际 \(pages) 页）")
+        XCTAssertTrue(pagesOK, "PDF 应含 BOM 材料页 + 图纸页")
     }
 
     // T2.12 长流程稳定性：5 次生成 + 3 次编辑不挂起

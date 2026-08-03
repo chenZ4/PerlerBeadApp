@@ -72,6 +72,16 @@ final class AppViewModel: ObservableObject {
             return
         }
         engine = eng
+        // F1/F4: 引擎异常退出 → 状态栏显示退出与日志
+        eng.onEngineExit = { [weak self] in
+            guard let self else { return }
+            let log = eng.engineErrorLog
+            let tail = String(log.suffix(200))
+            self.statusText = "引擎已退出\(tail.isEmpty ? "" : "：\(tail)")"
+            self.isBusy = false
+            self.progress = -1
+        }
+        // F4: ping 5s 超时
         eng.ping { [weak self] result in
             guard let self else { return }
             switch result {
@@ -133,6 +143,8 @@ final class AppViewModel: ObservableObject {
         lastResult = nil
         chartImage = nil
         finishedImage = nil
+        offset = .zero
+        progress = -1
         trackKey = stableKey(keySource)
         loadTrack()
     }
@@ -226,13 +238,30 @@ final class AppViewModel: ObservableObject {
 
     private func applyResult(_ gen: GenerateResult) {
         lastResult = gen
-        chartImage = NSImage(contentsOfFile: gen.chartPath)
+        chartImage = loadPreviewImage(path: gen.chartPath)
         if let fp = gen.finishedPath {
-            finishedImage = NSImage(contentsOfFile: fp)
+            finishedImage = loadPreviewImage(path: fp)
         } else {
             finishedImage = nil
         }
         if trackKey != nil { loadTrack() }
+    }
+
+    /// F5: 预览图降采样（≤2048px），避免大图在主线程渲染卡顿
+    private func loadPreviewImage(path: String) -> NSImage? {
+        guard let img = NSImage(contentsOfFile: path) else { return nil }
+        let maxDim: CGFloat = 2048
+        let w = img.size.width
+        let h = img.size.height
+        guard w > 0, h > 0, max(w, h) > maxDim else { return img }
+        let scale = maxDim / max(w, h)
+        let newSize = NSSize(width: w * scale, height: h * scale)
+        let out = NSImage(size: newSize)
+        out.lockFocus()
+        img.draw(in: NSRect(origin: .zero, size: newSize),
+                 from: .zero, operation: .copy, fraction: 1.0)
+        out.unlockFocus()
+        return out
     }
 
     // MARK: - 编辑

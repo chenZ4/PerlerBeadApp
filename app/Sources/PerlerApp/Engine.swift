@@ -34,6 +34,10 @@ final class Engine {
     private let readQueue = DispatchQueue(label: "engine.read")
     private let lock = NSLock()
     private var lastError = ""
+    private var engineExited = false
+
+    /// 引擎进程退出回调（主线程调用）
+    var onEngineExit: (() -> Void)?
 
     static var engineScript: String {
         let dir = URL(fileURLWithPath: #filePath)
@@ -86,7 +90,7 @@ final class Engine {
     }
 
     func ping(completion: @escaping (Result<Bool, Error>) -> Void) {
-        request(op: "ping", params: [:]) { result in
+        request(op: "ping", params: [:], timeout: 5) { result in
             switch result {
             case .success(let r):
                 completion(.success((r["pong"] as? Bool) ?? false))
@@ -99,22 +103,39 @@ final class Engine {
     func request(op: String, params: [String: Any],
                  requestID: Int? = nil,
                  onProgress: ((Double) -> Void)? = nil,
-                 timeout: TimeInterval = 30,
+                 timeout: TimeInterval = 15,
                  completion: @escaping (Result<[String: Any], Error>) -> Void) {
         let rid = requestID ?? nextID
         if requestID == nil { nextID += 1 }
 
+        // F0: 所有回调强制主线程（@MainActor 状态安全）
+        let mainCompletion: (Result<[String: Any], Error>) -> Void = { result in
+            DispatchQueue.main.async { completion(result) }
+        }
+        let mainProgress: ((Double) -> Void)? = onProgress.map { progress in
+            { p in DispatchQueue.main.async { progress(p) } }
+        }
+
         lock.lock()
-        pending[rid] = (onProgress, completion)
+        if engineExited {
+            lock.unlock()
+            DispatchQueue.main.async {
+                completion(.failure(EngineError.serverError("引擎已退出")))
+            }
+            return
+        }
+        pending[rid] = (mainProgress, mainCompletion)
         lock.unlock()
 
-        // 超时保护：pending 未被消费则报超时
+        // F3: 超时保护（15s），回调已保证主线程
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
             guard let self else { return }
             self.lock.lock()
             let cb = self.pending.removeValue(forKey: rid)?.completion
             self.lock.unlock()
-            cb?(.failure(EngineError.timeout))
+            DispatchQueue.main.async {
+                cb?(.failure(EngineError.timeout))
+            }
         }
 
         var msg: [String: Any] = ["id": rid, "op": op]
@@ -124,11 +145,20 @@ final class Engine {
             lock.lock()
             pending.removeValue(forKey: rid)
             lock.unlock()
-            completion(.failure(EngineError.invalidResponse))
+            DispatchQueue.main.async { completion(.failure(EngineError.invalidResponse)) }
             return
         }
-        let handle = inPipe.fileHandleForWriting
-        handle.write((line + "\n").data(using: .utf8)!)
+        // F2: write 异常防护（引擎退出/pipe 损坏时快速失败而非静默）
+        do {
+            try inPipe.fileHandleForWriting.write(contentsOf: (line + "\n").data(using: .utf8)!)
+        } catch {
+            lock.lock()
+            let cb = pending.removeValue(forKey: rid)?.completion
+            lock.unlock()
+            DispatchQueue.main.async {
+                cb?(.failure(EngineError.serverError("引擎通信失败：\(error.localizedDescription)")))
+            }
+        }
     }
 
     private func readLoop() {
@@ -145,6 +175,33 @@ final class Engine {
                 handleLine(line)
             }
         }
+        // F1: 引擎进程退出（EOF）→ 全部 pending 快速失败 + 退出回调
+        failAllPending(EngineError.serverError("引擎已退出"))
+        DispatchQueue.main.async { [weak self] in
+            self?.onEngineExit?()
+        }
+    }
+
+    /// F1: 引擎退出时让所有挂起请求快速失败
+    private func failAllPending(_ error: Error) {
+        lock.lock()
+        let entries = pending
+        pending.removeAll()
+        engineExited = true
+        lock.unlock()
+        for entry in entries.values {
+            DispatchQueue.main.async {
+                entry.completion(.failure(error))
+            }
+        }
+    }
+
+    /// 供测试使用：强制终止引擎进程
+    func terminateForTesting() {
+        lock.lock()
+        engineExited = true
+        lock.unlock()
+        process.terminate()
     }
 
     private func readErrorLoop() {

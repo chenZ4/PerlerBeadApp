@@ -98,7 +98,13 @@ struct ContentView: View {
                 }
 
                 HStack {
-                    if vm.isBusy { ProgressView().controlSize(.small) }
+                    if vm.isBusy {
+                        if vm.progress >= 0 {
+                            ProgressView(value: vm.progress).controlSize(.small)
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
                     Text(vm.statusText)
                         .font(.caption)
                         .foregroundStyle(vm.isBusy ? Color.accentColor : .secondary)
@@ -142,6 +148,9 @@ struct ContentView: View {
             .gesture(dragGesture, including: vm.editMode ? .none : .all)
             .gesture(editGesture, including: vm.editMode ? .all : .none)
             .onTapGesture(count: 2) { vm.resetPreviewOffset() }
+            .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+                handleDrop(providers)
+            }
 
             HStack {
                 Toggle("适应窗口", isOn: $vm.fitToWindow)
@@ -201,6 +210,19 @@ struct ContentView: View {
     }
 
     // MARK: - 文件交互
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            let ext = url.pathExtension.lowercased()
+            guard ["png", "jpg", "jpeg", "webp", "gif", "bmp"].contains(ext) else { return }
+            Task { @MainActor in
+                self.vm.setImagePath(url.path)
+            }
+        }
+        return true
+    }
+
     private func chooseImage() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.png, .jpeg, .webP]
