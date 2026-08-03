@@ -33,6 +33,7 @@ struct ContentView: View {
     @State private var lastResult: GenerateResult?
     @State private var isBusy = false
     @State private var statusText = "就绪"
+    @State private var showColorChart = false
 
     // 预览
     @State private var zoom: Double = 100
@@ -41,83 +42,123 @@ struct ContentView: View {
     @State private var offset = CGSize.zero
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             settingsPanel
-                .frame(minWidth: 260, idealWidth: 300)
+                .frame(width: 300)
+            Divider()
             previewPanel
-                .frame(minWidth: 600)
+        }
+        .background(.ultraThinMaterial)
+        .sheet(isPresented: $showColorChart) {
+            ColorChartView(paletteName: paletteName, engine: engine)
         }
         .onAppear(perform: setup)
     }
 
-    // MARK: - 设置面板
+    // MARK: - 设置面板（毛玻璃卡片）
     private var settingsPanel: some View {
-        Form {
-            Section("图片源") {
-                Button(imagePath == nil ? "选择图片…" : (imagePath! as NSString).lastPathComponent) {
-                    chooseImage()
-                }
-                .disabled(isBusy)
-                if templates.isEmpty == false {
-                    Picker("模板", selection: $selectedTemplate) {
-                        Text("自定义").tag(String?.none)
-                        ForEach(templates, id: \.id) { t in
-                            Text("\(t.name) (\(t.width)×\(t.height))").tag(Optional(t.id))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                glassSection("图片源") {
+                    Button(action: chooseImage) {
+                        Label(imagePath == nil ? "选择图片…"
+                              : (imagePath! as NSString).lastPathComponent,
+                              systemImage: "photo")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isBusy)
+                    if templates.isEmpty == false {
+                        Picker("模板", selection: $selectedTemplate) {
+                            Text("自定义").tag(String?.none)
+                            ForEach(templates, id: \.id) { t in
+                                Text("\(t.name) (\(t.width)×\(t.height))").tag(Optional(t.id))
+                            }
+                        }
+                        .onChange(of: selectedTemplate) { _, id in
+                            loadTemplate(id)
                         }
                     }
-                    .disabled(isBusy)
-                    .onChange(of: selectedTemplate) { _, id in
-                        loadTemplate(id)
+                }
+
+                glassSection("网格") {
+                    gridField("宽 (颗)", text: $gridW)
+                    gridField("高 (颗)", text: $gridH)
+                    gridField("每格像素", text: $cellSize)
+                }
+
+                glassSection("色卡") {
+                    Picker("色卡", selection: $paletteName) {
+                        ForEach(palettes, id: \.display) { p in
+                            Text("\(p.display) (\(p.count))").tag(p.display)
+                        }
+                    }
+                    Button("查看色卡") { showColorChart = true }
+                        .buttonStyle(.bordered)
+                }
+
+                glassSection("特效（默认关闭）") {
+                    Toggle("邻接描边", isOn: $outlineCellOn)
+                    Toggle("线稿描边", isOn: $outlineEdgeOn)
+                    Toggle("黑白/灰度", isOn: $grayscaleOn)
+                    Toggle("抖动过渡", isOn: $ditherOn)
+                    Toggle("深色底图纸", isOn: $darkChartOn)
+                    Toggle("限色数", isOn: $maxColorsOn)
+                    if maxColorsOn {
+                        Stepper("最多 \(maxColorsValue) 色", value: $maxColorsValue, in: 2...50)
+                    }
+                    Toggle("风格色板", isOn: $presetOn)
+                    if presetOn {
+                        Picker("风格", selection: $presetName) {
+                            Text("马卡龙可爱").tag("pastel")
+                            Text("Preppy/Y2K").tag("preppy")
+                            Text("万圣节").tag("halloween")
+                            Text("圣诞").tag("christmas")
+                            Text("Cottagecore").tag("cottagecore")
+                        }
                     }
                 }
-            }
-            Section("网格") {
-                TextField("宽 (颗)", text: $gridW)
-                TextField("高 (颗)", text: $gridH)
-                TextField("每格像素", text: $cellSize)
-            }
-            Section("色卡") {
-                Picker("色卡", selection: $paletteName) {
-                    ForEach(palettes, id: \.display) { p in
-                        Text("\(p.display) (\(p.count))").tag(p.display)
+
+                glassSection("操作") {
+                    Button(action: generate) {
+                        Label("生成", systemImage: "sparkles")
                     }
-                }
-            }
-            Section("特效（默认关闭）") {
-                Toggle("邻接描边", isOn: $outlineCellOn)
-                Toggle("线稿描边", isOn: $outlineEdgeOn)
-                Toggle("黑白/灰度", isOn: $grayscaleOn)
-                Toggle("抖动过渡", isOn: $ditherOn)
-                Toggle("深色底图纸", isOn: $darkChartOn)
-                Toggle("限色数", isOn: $maxColorsOn)
-                if maxColorsOn {
-                    Stepper("最多 \(maxColorsValue) 色", value: $maxColorsValue, in: 2...50)
-                }
-                Toggle("风格色板", isOn: $presetOn)
-                if presetOn {
-                    Picker("风格", selection: $presetName) {
-                        Text("马卡龙可爱").tag("pastel")
-                        Text("Preppy/Y2K").tag("preppy")
-                        Text("万圣节").tag("halloween")
-                        Text("圣诞").tag("christmas")
-                        Text("Cottagecore").tag("cottagecore")
-                    }
-                }
-            }
-            Section("操作") {
-                Button("生成") { generate() }
+                    .buttonStyle(.borderedProminent)
                     .disabled(isBusy || (imagePath == nil && selectedTemplate == nil))
-                if let result = lastResult {
-                    Button("导出 PNG…") { exportPNG(result: result) }
-                    Button("导出 PDF…") { exportPDF(result: result) }
+                    if let result = lastResult {
+                        Button("导出 PNG…") { exportPNG(result: result) }
+                        Button("导出 PDF…") { exportPDF(result: result) }
+                    }
                 }
+
+                HStack {
+                    if isBusy { ProgressView().controlSize(.small) }
+                    Text(statusText)
+                        .font(.caption)
+                        .foregroundStyle(isBusy ? Color.accentColor : .secondary)
+                }
+                .padding(.horizontal, 4)
             }
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(isBusy ? Color.accentColor : .secondary)
+            .padding(12)
         }
-        .formStyle(.grouped)
-        .padding()
+    }
+
+    private func glassSection<Content: View>(_ title: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            content()
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func gridField(_ label: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(label).frame(width: 70, alignment: .leading)
+            TextField(label, text: text)
+                .textFieldStyle(.roundedBorder)
+        }
     }
 
     // MARK: - 预览面板

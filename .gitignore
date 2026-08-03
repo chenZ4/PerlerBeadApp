@@ -369,3 +369,4 @@ history.json
 app_settings.json
 queue_state.json
 .venv/
+app/.build/
