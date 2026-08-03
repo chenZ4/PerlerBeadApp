@@ -371,3 +371,4 @@ queue_state.json
 .venv/
 app/.build/
 track/
+app/.swiftpm/

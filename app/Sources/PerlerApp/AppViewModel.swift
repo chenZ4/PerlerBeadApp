@@ -121,9 +121,20 @@ final class AppViewModel: ObservableObject {
     func setImagePath(_ path: String) {
         imagePath = path
         selectedTemplate = nil
-        trackKey = stableKey(path)
-        loadTrack()
+        resetForNewImage(path)
         statusText = "已选择图片"
+    }
+
+    /// 换图/换模板时重置结果与编辑状态（防止旧编辑污染新图）
+    private func resetForNewImage(_ keySource: String) {
+        editHistory = []
+        doneCells = []
+        trackedCount = 0
+        lastResult = nil
+        chartImage = nil
+        finishedImage = nil
+        trackKey = stableKey(keySource)
+        loadTrack()
     }
 
     func loadTemplate(_ id: String?) {
@@ -137,8 +148,7 @@ final class AppViewModel: ObservableObject {
                     self.selectedTemplate = id
                     if let w = r["width"] as? Int { self.gridW = "\(w)" }
                     if let h = r["height"] as? Int { self.gridH = "\(h)" }
-                    self.trackKey = self.stableKey("tpl_\(id)")
-                    self.loadTrack()
+                    self.resetForNewImage("tpl_\(id)")
                     self.syncPaletteToTemplate(id)
                     self.statusText = "已加载模板"
                 }

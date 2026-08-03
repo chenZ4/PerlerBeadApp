@@ -200,30 +200,8 @@ class ImageProcessor:
 
             # 3.4 手动编辑覆盖（grid_overrides: {(y,x): code}）
             if grid_overrides:
-                code_to_idx = {c: i for i, c in enumerate(palette.codes)}
-                for (y, x), code in grid_overrides.items():
-                    if not (0 <= y < final_grid_h and 0 <= x < final_grid_w):
-                        continue
-                    ci = code_to_idx.get(str(code).strip())
-                    if ci is None:
-                        continue
-                    grid_colors[y][x] = palette.colors[ci]
-                    grid_codes[y][x] = palette.codes[ci].strip()
-                    grid_idx[y][x] = ci
-                color_stats = {}
-                for y in range(final_grid_h):
-                    for x in range(final_grid_w):
-                        code = grid_codes[y][x]
-                        if code is None:
-                            continue
-                        ci = grid_idx[y][x]
-                        if code not in color_stats:
-                            color_stats[code] = {
-                                "rgb": grid_colors[y][x],
-                                "name": palette.names[ci].strip(),
-                                "code": code, "count": 0, "index": ci,
-                            }
-                        color_stats[code]["count"] += 1
+                color_stats = self._apply_grid_overrides(
+                    grid_overrides, palette, grid_colors, grid_codes, grid_idx)
 
             # 3.5 特效：网格阶段（作用于映射后的 grid 索引矩阵）
             if effects:
@@ -249,21 +227,11 @@ class ImageProcessor:
                             grid_codes[y][x] = palette.codes[ci].strip()
                             grid_idx[y][x] = ci
                 # grid 特效可能改色 → 重建颜色统计（空格不计入）
-                color_stats = {}
-                for y in range(final_grid_h):
-                    for x in range(final_grid_w):
-                        code = grid_codes[y][x]
-                        if code is None:
-                            continue
-                        rgb = grid_colors[y][x]
-                        ci = grid_idx[y][x]
-                        if code not in color_stats:
-                            color_stats[code] = {
-                                "rgb": rgb,
-                                "name": palette.names[ci].strip(),
-                                "code": code, "count": 0, "index": ci,
-                            }
-                        color_stats[code]["count"] += 1
+                color_stats = self._rebuild_stats(palette, grid_colors, grid_codes, grid_idx)
+                # 手动编辑优先：特效后重新应用 overrides（编辑格不被描边/限色覆盖）
+                if grid_overrides:
+                    color_stats = self._apply_grid_overrides(
+                        grid_overrides, palette, grid_colors, grid_codes, grid_idx)
 
             # 4. 计算画布尺寸（每格像素与格子数解耦）
             if cell_size and cell_size > 0:
@@ -396,6 +364,39 @@ class ImageProcessor:
             import traceback
             traceback.print_exc()
             return None
+
+    @staticmethod
+    def _rebuild_stats(palette, grid_colors, grid_codes, grid_idx):
+        color_stats = {}
+        for y in range(len(grid_codes)):
+            for x in range(len(grid_codes[y])):
+                code = grid_codes[y][x]
+                if code is None:
+                    continue
+                ci = grid_idx[y][x]
+                if code not in color_stats:
+                    color_stats[code] = {
+                        "rgb": grid_colors[y][x],
+                        "name": palette.names[ci].strip(),
+                        "code": code, "count": 0, "index": ci,
+                    }
+                color_stats[code]["count"] += 1
+        return color_stats
+
+    def _apply_grid_overrides(self, grid_overrides, palette,
+                              grid_colors, grid_codes, grid_idx):
+        """应用手动编辑覆盖并重建统计（编辑优先于特效）"""
+        code_to_idx = {c: i for i, c in enumerate(palette.codes)}
+        for (y, x), code in grid_overrides.items():
+            if not (0 <= y < len(grid_codes) and 0 <= x < len(grid_codes[y])):
+                continue
+            ci = code_to_idx.get(str(code).strip())
+            if ci is None:
+                continue
+            grid_colors[y][x] = palette.colors[ci]
+            grid_codes[y][x] = palette.codes[ci].strip()
+            grid_idx[y][x] = ci
+        return self._rebuild_stats(palette, grid_colors, grid_codes, grid_idx)
 
     def _draw_legend_footer(self, draw, grid_w, grid_h, cell_size,
                             total_width, total_height, color_stats, total_beads,
