@@ -50,6 +50,14 @@ struct ContentView: View {
                     gridField("宽 (颗)", text: $vm.gridW)
                     gridField("高 (颗)", text: $vm.gridH)
                     gridField("每格像素", text: $vm.cellSize)
+                    Picker("比例", selection: $vm.ratioMode) {
+                        ForEach(vm.ratioOptions, id: \.self) { option in
+                            Text(option).tag(option)
+                        }
+                    }
+                    .onChange(of: vm.ratioMode) { _, _ in
+                        vm.applyRatioLink()
+                    }
                 }
 
                 glassSection("色卡") {
@@ -86,15 +94,25 @@ struct ContentView: View {
                 }
 
                 glassSection("操作") {
-                    Button(action: vm.generate) {
-                        Label("生成", systemImage: "sparkles")
+                    HStack {
+                        Button(action: vm.generate) {
+                            Label("生成", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(vm.isBusy || (vm.imagePath == nil && vm.selectedTemplate == nil))
+                        if vm.isBusy {
+                            Button("取消", role: .destructive) { vm.cancelActive() }
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(vm.isBusy || (vm.imagePath == nil && vm.selectedTemplate == nil))
                     if vm.lastResult != nil {
                         Button("导出 PNG…") { exportPNG() }
-                        Button("导出 PDF…") { exportPDF() }
+                        Button("导出 PDF…") { showPDFModeDialog = true }
                     }
+                }
+                .confirmationDialog("PDF 导出模式", isPresented: $showPDFModeDialog) {
+                    Button("适应 A4 单页") { exportPDF(mode: "a4") }
+                    Button("1:1 实物大小多页") { exportPDF(mode: "1x1") }
+                    Button("取消", role: .cancel) {}
                 }
 
                 HStack {
@@ -133,11 +151,13 @@ struct ContentView: View {
     }
 
     // MARK: - 预览面板
+    @State private var showPDFModeDialog = false
+
     private var previewPanel: some View {
         VStack(spacing: 8) {
             ZStack {
                 Rectangle().fill(Color.gray.opacity(0.12))
-                if let img = vm.showFinished ? vm.finishedImage : vm.chartImage {
+                if let img = vm.effectiveShowFinished ? vm.finishedImage : vm.chartImage {
                     previewImage(img)
                 } else {
                     Text(vm.isBusy ? "正在处理…" : "请选择图片或模板并生成")
@@ -246,10 +266,11 @@ struct ContentView: View {
         vm.exportPNG(to: dest)
     }
 
-    private func exportPDF() {
+    private func exportPDF(mode: String) {
         guard let result = vm.lastResult else { return }
-        guard let dest = savePanel(defaultName: "perler_\(result.gridW)x\(result.gridH).pdf",
-                                   types: ["pdf"]) else { return }
-        vm.exportPDF(to: dest)
+        let name = mode == "1x1" ? "perler_\(result.gridW)x\(result.gridH)_1x1.pdf"
+                                  : "perler_\(result.gridW)x\(result.gridH).pdf"
+        guard let dest = savePanel(defaultName: name, types: ["pdf"]) else { return }
+        vm.exportPDF(to: dest, mode: mode)
     }
 }

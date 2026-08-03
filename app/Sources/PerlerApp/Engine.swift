@@ -103,6 +103,7 @@ final class Engine {
     func request(op: String, params: [String: Any],
                  requestID: Int? = nil,
                  onProgress: ((Double) -> Void)? = nil,
+                 onStart: ((Int) -> Void)? = nil,
                  timeout: TimeInterval = 15,
                  completion: @escaping (Result<[String: Any], Error>) -> Void) {
         let rid = requestID ?? nextID
@@ -114,6 +115,10 @@ final class Engine {
         }
         let mainProgress: ((Double) -> Void)? = onProgress.map { progress in
             { p in DispatchQueue.main.async { progress(p) } }
+        }
+
+        if let onStart {
+            DispatchQueue.main.async { onStart(rid) }
         }
 
         lock.lock()

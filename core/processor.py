@@ -80,7 +80,7 @@ class ImageProcessor:
 
     def process_image(self, image_path, grid_w, grid_h, canvas_size=1500,
                       cell_size=None, max_canvas=MAX_CANVAS,
-                      fit_box=False, show_finished=False,
+                      fit_box=False, exact_grid=False, show_finished=False,
                       effects=None, grid_overrides=None,
                       show_grid=True, grid_color=GRID_DEFAULT, grid_width=1,
                       palette_name="mard_221", show_color_legend=True,
@@ -91,6 +91,7 @@ class ImageProcessor:
         cell_size: 每格像素（与格子数解耦）；不传时用 canvas_size // 最大格子（旧逻辑）
         max_canvas: 输出总边长上限保护
         fit_box: True 时按请求框等比完整放入（取小），False 时按较宽一侧为基准
+        exact_grid: True 时强制精确网格（不按源图比例调整，忽略 fit_box）
         show_finished: True 时额外渲染一张纯色成品效果图（预览用，4096px 上限降采样）
         effects: [{"id": ..., "params": {...}}] 特效链（全部默认关闭）
         grid_overrides: {(y, x): code} 手动编辑覆盖（映射后应用）
@@ -119,7 +120,10 @@ class ImageProcessor:
             new_w = max(1, int(orig_w * scale))
             new_h = max(1, int(orig_h * scale))
 
-            if fit_box:
+            if exact_grid:
+                final_grid_w = max(1, grid_w)
+                final_grid_h = max(1, grid_h)
+            elif fit_box:
                 final_grid_w = new_w
                 final_grid_h = new_h
             elif grid_w >= grid_h:

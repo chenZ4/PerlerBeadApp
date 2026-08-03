@@ -10,16 +10,58 @@ final class AppViewModel: ObservableObject {
     @Published var statusText = "就绪"
     @Published var isBusy = false
     @Published var progress: Double = -1
+    private var activeRequestID: Int?
+
+    /// R4: 取消当前生成/编辑请求（rid 未就绪时也立即复位 UI）
+    func cancelActive() {
+        if let eng = engine, let rid = activeRequestID {
+            eng.request(op: "cancel", params: [:], requestID: rid) { _ in }
+        }
+        isBusy = false
+        progress = -1
+        activeRequestID = nil
+        statusText = "已取消"
+    }
 
     // MARK: 参数
     @Published var imagePath: String?
     @Published var gridW = "29"
     @Published var gridH = "29"
     @Published var cellSize = "60"
+    @Published var ratioMode = "原始比例"
     @Published var paletteDisplay = "MARD 221 色"
     @Published var selectedTemplate: String?
     @Published var palettes: [PaletteInfo] = []
     @Published var templates: [TemplateInfo] = []
+
+    let ratioOptions = ["原始比例", "等比完整", "1:1", "4:3", "3:4", "16:9", "9:16"]
+
+    /// R1: 比例模式 → 网格参数（exact_grid 强制精确，fit_box 等比完整）
+    private func gridParams() -> (exact: Bool, fitBox: Bool) {
+        switch ratioMode {
+        case "等比完整":
+            return (false, true)
+        case "1:1", "4:3", "3:4", "16:9", "9:16":
+            return (true, false)
+        default:
+            return (false, false)
+        }
+    }
+
+    /// 选择固定比例时联动高（对齐 Tk 版行为）
+    func applyRatioLink() {
+        guard let w = Int(gridW), w > 0 else { return }
+        let h: Int
+        switch ratioMode {
+        case "1:1": h = w
+        case "4:3": h = w * 3 / 4
+        case "3:4": h = w * 4 / 3
+        case "16:9": h = w * 9 / 16
+        case "9:16": h = w * 16 / 9
+        default: return
+        }
+        gridH = "\(max(1, h))"
+    }
 
     // MARK: 特效（全部默认关闭）
     @Published var outlineCellOn = false
@@ -55,6 +97,11 @@ final class AppViewModel: ObservableObject {
 
     var paletteInternal: String {
         palettes.first { $0.display == paletteDisplay }?.internalName ?? "mard_221"
+    }
+
+    /// R2: 编辑模式下强制显示图纸（成品切换在编辑时无效，避免点击错位）
+    var effectiveShowFinished: Bool {
+        !editMode && showFinished
     }
 
     var totalGrid: Int {
@@ -202,6 +249,7 @@ final class AppViewModel: ObservableObject {
         isBusy = true
         progress = 0
         statusText = "正在处理…"
+        let gp = gridParams()
         var params: [String: Any] = [
             "image_path": path,
             "grid_w": Int(gridW) ?? 29,
@@ -210,16 +258,22 @@ final class AppViewModel: ObservableObject {
             "palette": paletteInternal,
             "show_finished": true,
             "effects": effectsParams(),
+            "fit_box": gp.fitBox,
+            "exact_grid": gp.exact,
         ]
         if selectedTemplate != nil { params["board"] = Int(gridW) ?? 29 }
         eng.request(op: "generate", params: params,
                     onProgress: { [weak self] p in
                         Task { @MainActor in self?.progress = p }
+                    },
+                    onStart: { [weak self] rid in
+                        self?.activeRequestID = rid
                     }) { [weak self] result in
             guard let self else { return }
             defer {
                 self.isBusy = false
                 self.progress = -1
+                self.activeRequestID = nil
             }
             switch result {
             case .success(let r):
@@ -296,6 +350,7 @@ final class AppViewModel: ObservableObject {
         guard let eng = engine, let path = imagePath, let result = lastResult else { return }
         isBusy = true
         statusText = "正在应用编辑…"
+        let gp = gridParams()
         eng.request(op: "edit", params: [
             "image_path": path,
             "grid_w": result.gridW,
@@ -303,6 +358,8 @@ final class AppViewModel: ObservableObject {
             "cell_size": result.cellSize,
             "palette": paletteInternal,
             "effects": effectsParams(),
+            "fit_box": gp.fitBox,
+            "exact_grid": gp.exact,
             "overrides": editHistory,
         ]) { [weak self] res in
             guard let self else { return }
@@ -397,17 +454,19 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func exportPDF(to path: String, includeBOM: Bool = true) {
+    func exportPDF(to path: String, mode: String = "a4", includeBOM: Bool = true) {
         guard let eng = engine, let result = lastResult else { return }
         var params: [String: Any] = [
             "source_path": result.chartPath, "save_path": path,
-            "mode": "a4", "cell_size": result.cellSize,
+            "mode": mode, "cell_size": result.cellSize,
         ]
         if includeBOM { params["bom"] = result.colorStatsAny }
         eng.request(op: "export_pdf", params: params) { [weak self] res in
             guard let self else { return }
             switch res {
-            case .success: self.statusText = "PDF 已导出（含材料清单）"
+            case .success:
+                let modeName = mode == "1x1" ? "1:1 实物" : "A4"
+                self.statusText = "PDF 已导出（\(modeName)）"
             case .failure(let e): self.statusText = "PDF 导出失败：\(e.localizedDescription)"
             }
         }
