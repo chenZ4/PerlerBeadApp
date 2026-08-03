@@ -1292,11 +1292,12 @@ class DesktopUI:
                 try:
                     result = self.processor.process_image(
                         item['image_path'], grid_w, grid_h,
-                        cell_size=cell_px, show_grid=item['show_grid'],
+                        cell_size=cell_px,
+                        show_grid=item.get('show_grid', True),
                         grid_color=grid_color, palette_name=palette_internal,
-                        show_color_legend=item['show_legend'],
-                        show_row_col_labels=item['show_labels'],
-                        fit_box=(item['ratio'] == RATIO_FIT_BOX),
+                        show_color_legend=item.get('show_legend', True),
+                        show_row_col_labels=item.get('show_labels', True),
+                        fit_box=(item.get('ratio') == RATIO_FIT_BOX),
                         save=False, cancel_callback=lambda: self._queue_cancel)
                     if result is None:
                         if self._queue_cancel:
@@ -1313,10 +1314,13 @@ class DesktopUI:
                         img.save(out_path)
                     success.append(out_path)
                     self.history_mgr.add_record(item['image_path'], out_path,
-                                                grid_w, grid_h, item['ratio'],
-                                                cell_px, item['show_grid'],
-                                                item['grid_color'], item['palette'],
-                                                item['show_labels'])
+                                                grid_w, grid_h,
+                                                item.get('ratio', RATIO_ORIGINAL),
+                                                cell_px,
+                                                item.get('show_grid', True),
+                                                item.get('grid_color', DEFAULT_GRID_COLOR),
+                                                item.get('palette', 'MARD 221 色'),
+                                                item.get('show_labels', True))
                 except Exception as e:
                     failed.append((os.path.basename(item['image_path']), str(e)))
                 finally:

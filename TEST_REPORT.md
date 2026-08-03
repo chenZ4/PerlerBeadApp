@@ -9,10 +9,10 @@
 
 | 测试套件 | 通过 | 失败 | 结果 |
 |---|---|---|---|
-| `tests/run_tests.py`（无界面自动化，含 Golden/耗时） | 52 | 0 | ✅ |
-| `tests/gui_smoke.py`（GUI 冒烟，全程零弹窗零交互） | 64 | 0 | ✅ |
+| `tests/run_tests.py`（无界面自动化，含 Golden/耗时/输入防御） | 54 | 0 | ✅ |
+| `tests/gui_smoke.py`（GUI 冒烟，全程零弹窗零交互） | 67 | 0 | ✅ |
 | `main.py` 真实启动 | — | — | ✅ |
-| **合计** | **116** | **0** | **✅ 交付** |
+| **合计** | **121** | **0** | **✅ 交付** |
 
 ## 二、冻结版功能清单（本次迭代全部完成）
 
@@ -57,9 +57,9 @@
 ## 五、运行与测试
 ```bash
 conda run -n pindou python main.py                # 运行
-conda run -n pindou python tests/run_tests.py     # 自动化测试（52 项）
-conda run -n pindou python tests/gui_smoke.py     # GUI 冒烟（64 项，零弹窗）
+conda run -n pindou python tests/run_tests.py     # 自动化测试（54 项）
+conda run -n pindou python tests/gui_smoke.py     # GUI 冒烟（67 项，零弹窗）
 ```
 
 ## 结论
-116 项测试全部通过（GUI 测试全程零弹窗、零人工交互），冻结版 v1.0.0 满足交付条件。
+121 项测试全部通过（GUI 测试全程零弹窗、零人工交互），冻结版 v1.0.0 满足交付条件。

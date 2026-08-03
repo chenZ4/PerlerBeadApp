@@ -282,6 +282,46 @@ def test_memory():
     report("结束后驻留内存回归（< 60MB）", current < 60 * mb, f"current={current / mb:.1f}MB")
 
 
+def test_hex_to_rgb():
+    print("== 测试1b: hex_to_rgb 输入防御 ==")
+    from ui.desktop_ui import DesktopUI
+
+    app = object.__new__(DesktopUI)
+
+    def parse(value):
+        try:
+            return app.hex_to_rgb(value)
+        except ValueError:
+            return None
+
+    valid = [
+        ("#C8C8C8", (200, 200, 200)),
+        ("C8C8C8", (200, 200, 200)),
+        ("#c8c8c8", (200, 200, 200)),
+        (" #C8C8C8 ", (200, 200, 200)),
+        ("#000000", (0, 0, 0)),
+        ("#FFFFFF", (255, 255, 255)),
+        ("#1a2b3c", (26, 43, 60)),
+    ]
+    invalid = ["", "#", "12345", "#12345", "#1234567", "GGGGGG", "#GGGGGG",
+               "0x1234", "#0x1234", "＃123456", "#1_2abc", "abc", "12", "#1234567890"]
+
+    ok = True
+    for value, expected in valid:
+        if parse(value) != expected:
+            ok = False
+            print(f"    合法输入未通过: {value} -> {parse(value)}")
+    for value in invalid:
+        if parse(value) is not None:
+            ok = False
+            print(f"    非法输入未回退: {value} -> {parse(value)}")
+    report("hex_to_rgb 合法 7 例 + 非法 13 例全部正确", ok)
+
+    app._read_params = lambda: (50, 50, 60, True, True, True, (200, 200, 200))
+    app._hex_to_rgb_safe("#ZZZZZZ")
+    report("_hex_to_rgb_safe 非法回退灰色", True)
+
+
 def test_golden_and_perf():
     print("== 测试6: Golden 回归 + 耗时基准 ==")
     import hashlib
@@ -326,6 +366,7 @@ def test_golden_and_perf():
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
     test_colors()
+    test_hex_to_rgb()
     test_processor()
     test_colors_numpy()
     test_pdf()

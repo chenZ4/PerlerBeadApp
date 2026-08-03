@@ -123,6 +123,19 @@ app.generate_preview()
 pump()
 report("非法宽高/hex 不崩溃且正常生成", app.processed_image is not None)
 report("非法宽高回退默认值", app.entry_w.get() == "abc" and app.processed_image is not None)
+
+bad_hexes = ["", "#", "12345", "#1234567", "GGGGGG", "0x1234", "＃123456",
+             "#1_2abc", "abc", "12", "#1234567890", "None", "  "]
+all_safe = True
+for bad in bad_hexes:
+    app.grid_color_var.set(bad)
+    app.generate_preview()
+    pump()
+    if app.processed_image is None:
+        all_safe = False
+        print(f"    hex 输入崩: {bad!r}")
+report(f"hex 穷举 {len(bad_hexes)} 例非法输入全部回退不崩", all_safe)
+
 app.entry_w.delete(0, tk.END)
 app.entry_w.insert(0, "50")
 app.entry_h.delete(0, tk.END)
