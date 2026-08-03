@@ -10,11 +10,13 @@ final class Engine {
     enum EngineError: LocalizedError {
         case launchFailed
         case invalidResponse
+        case timeout
         case serverError(String)
         var errorDescription: String? {
             switch self {
             case .launchFailed: return "无法启动引擎"
             case .invalidResponse: return "引擎响应无效"
+            case .timeout: return "引擎请求超时"
             case .serverError(let m): return m
             }
         }
@@ -23,11 +25,15 @@ final class Engine {
     private let process: Process
     private let outPipe = Pipe()
     private let inPipe = Pipe()
+    private let errPipe = Pipe()
     private var buffer = ""
-    private var pending: [Int: (Result<[String: Any], Error>) -> Void] = [:]
+    private var pending: [Int: (onProgress: ((Double) -> Void)?,
+                                completion: (Result<[String: Any], Error>) -> Void)] = [:]
     private var nextID = 1
     private let syncQueue = DispatchQueue(label: "engine.sync")
     private let readQueue = DispatchQueue(label: "engine.read")
+    private let lock = NSLock()
+    private var lastError = ""
 
     static var engineScript: String {
         let dir = URL(fileURLWithPath: #filePath)
@@ -46,7 +52,7 @@ final class Engine {
             "\(home)/miniconda3/bin/python",
             "/opt/homebrew/Caskroom/miniconda/base/envs/pindou/bin/python",
             "/usr/local/miniconda3/envs/pindou/bin/python",
-            "/usr/bin/python3",
+            "/opt/homebrew/Caskroom/miniconda/base/envs/pindou/bin/python3",
         ]
         for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
             return c
@@ -61,7 +67,7 @@ final class Engine {
         process.arguments = [Engine.engineScript]
         process.standardOutput = outPipe
         process.standardInput = inPipe
-        process.standardError = Pipe()
+        process.standardError = errPipe
         do {
             try process.run()
         } catch {
@@ -69,6 +75,9 @@ final class Engine {
         }
         readQueue.async { [weak self] in
             self?.readLoop()
+        }
+        readQueue.async { [weak self] in
+            self?.readErrorLoop()
         }
     }
 
@@ -87,33 +96,39 @@ final class Engine {
         }
     }
 
-    func cancel(id: Int) {
-        request(op: "cancel", params: [:], requestID: id) { _ in }
-    }
-
     func request(op: String, params: [String: Any],
                  requestID: Int? = nil,
                  onProgress: ((Double) -> Void)? = nil,
+                 timeout: TimeInterval = 30,
                  completion: @escaping (Result<[String: Any], Error>) -> Void) {
         let rid = requestID ?? nextID
         if requestID == nil { nextID += 1 }
-        syncQueue.async { [weak self] in
+
+        lock.lock()
+        pending[rid] = (onProgress, completion)
+        lock.unlock()
+
+        // 超时保护：pending 未被消费则报超时
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
             guard let self else { return }
-            self.pending[rid] = { result in
-                if let onProgress { onProgress(-1) }  // 占位：进度走全局回调
-                DispatchQueue.main.async { completion(result) }
-            }
-            var msg: [String: Any] = ["id": rid, "op": op]
-            if !params.isEmpty { msg["params"] = params }
-            guard let data = try? JSONSerialization.data(withJSONObject: msg),
-                  let line = String(data: data, encoding: .utf8) else {
-                self.pending.removeValue(forKey: rid)
-                DispatchQueue.main.async { completion(.failure(EngineError.invalidResponse)) }
-                return
-            }
-            let handle = self.inPipe.fileHandleForWriting
-            handle.write((line + "\n").data(using: .utf8)!)
+            self.lock.lock()
+            let cb = self.pending.removeValue(forKey: rid)?.completion
+            self.lock.unlock()
+            cb?(.failure(EngineError.timeout))
         }
+
+        var msg: [String: Any] = ["id": rid, "op": op]
+        if !params.isEmpty { msg["params"] = params }
+        guard let data = try? JSONSerialization.data(withJSONObject: msg),
+              let line = String(data: data, encoding: .utf8) else {
+            lock.lock()
+            pending.removeValue(forKey: rid)
+            lock.unlock()
+            completion(.failure(EngineError.invalidResponse))
+            return
+        }
+        let handle = inPipe.fileHandleForWriting
+        handle.write((line + "\n").data(using: .utf8)!)
     }
 
     private func readLoop() {
@@ -132,19 +147,48 @@ final class Engine {
         }
     }
 
+    private func readErrorLoop() {
+        let handle = errPipe.fileHandleForReading
+        while true {
+            let data = handle.availableData
+            if data.isEmpty { break }
+            if let chunk = String(data: data, encoding: .utf8) {
+                lock.lock()
+                lastError = String((lastError + chunk).suffix(4096))
+                lock.unlock()
+            }
+        }
+    }
+
+    var engineErrorLog: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastError
+    }
+
     private func handleLine(_ line: String) {
         guard let data = line.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rid = obj["id"] as? Int else { return }
-        if let event = obj["event"] as? String, event == "progress" {
-            return  // 进度事件：UI 层通过 request 的 progress 回调可扩展（当前忽略）
+
+        if let event = obj["event"] as? String, event == "progress",
+           let progress = obj["progress"] as? Double {
+            lock.lock()
+            let cb = pending[rid]?.onProgress
+            lock.unlock()
+            cb?(progress)
+            return
         }
-        let cb = pending.removeValue(forKey: rid)
+
+        lock.lock()
+        let entry = pending.removeValue(forKey: rid)
+        lock.unlock()
+        guard let entry else { return }
         if obj["ok"] as? Bool == true {
-            cb?(.success(obj))
+            entry.completion(.success(obj))
         } else {
             let err = (obj["error"] as? String) ?? "未知错误"
-            cb?(.failure(EngineError.serverError(err)))
+            entry.completion(.failure(EngineError.serverError(err)))
         }
     }
 }

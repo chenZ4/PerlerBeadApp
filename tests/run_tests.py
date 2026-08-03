@@ -463,6 +463,28 @@ def test_core_server():
                                  "cell_size": 40, "board": 29})
         report("板数网格 board=29 生效", r.get("ok") and r["grid_w"] == 29,
                f"grid_w={r.get('grid_w')}")
+
+        # 2.1 回归：palette 显示名等价 + finished_path + track 持久化
+        r = req(32, "generate", {"image_path": src, "grid_w": 30, "grid_h": 30,
+                                 "cell_size": 40, "palette": "MARD 221 色"})
+        codes = set(r["color_stats"].keys())
+        import core.colors as _cc
+        mard_codes = set(_cc.get_palette("mard_221").codes)
+        report("显示名 palette 解析为 221 色卡（非 fallback）",
+               r.get("ok") and codes <= mard_codes and len(codes) > 0,
+               f"stats={len(codes)}")
+        fp = r.get("finished_path")
+        report("generate 返回 finished_path 且文件存在",
+               fp and os.path.isfile(fp), str(fp))
+
+        req(33, "track_save", {"key": "t_test", "cells": ["1:1", "2:2"]})
+        r = req(34, "track_load", {"key": "t_test"})
+        report("track 持久化到项目目录", len(r.get("track", [])) == 2,
+               str(r.get("track")))
+        import shutil
+        tdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "track")
+        if os.path.isdir(tdir):
+            shutil.rmtree(tdir, ignore_errors=True)
     finally:
         close()
 def test_golden_and_perf():

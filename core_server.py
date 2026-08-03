@@ -22,10 +22,29 @@ from core.version import APP_VERSION
 
 PROGRESS_THROTTLE = 0.02  # 每 2% 发一次进度事件
 
+_DISPLAY_TO_INTERNAL = {d: i for d, i in PALETTE_OPTIONS}
+
+
+def _resolve_palette(name):
+    """显示名或 internal 名统一解析为 internal 名（防任何客户端传错）"""
+    if name in _DISPLAY_TO_INTERNAL:
+        return _DISPLAY_TO_INTERNAL[name]
+    if name in {i for _, i in PALETTE_OPTIONS}:
+        return name
+    return "mard_221"
+
 
 def tempfile_dir():
     import tempfile
     return tempfile.gettempdir()
+
+
+TRACK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "track")
+
+
+def track_dir():
+    os.makedirs(TRACK_DIR, exist_ok=True)
+    return TRACK_DIR
 
 
 class CoreServer:
@@ -66,9 +85,10 @@ class CoreServer:
         if op == "palettes":
             return {"ok": True, "palettes": [
                 {"display": d, "internal": i, "count": len(get_palette(i).colors)}
-                for d, i in PALETTE_OPTIONS]}
+                for d, i in sorted(PALETTE_OPTIONS,
+                                   key=lambda x: 0 if x[1] == "mard_221" else 1)]}
         if op == "palette_colors":
-            palette = get_palette(params.get("internal", "mard_221"))
+            palette = get_palette(_resolve_palette(params.get("internal", "mard_221")))
             return {"ok": True, "codes": palette.codes, "names": palette.names,
                     "colors": palette.colors, "hex": palette.hex_codes}
         if op == "my_colors_get":
@@ -171,7 +191,7 @@ class CoreServer:
             effects=params.get("effects"),
             show_grid=params.get("show_grid", True),
             grid_color=tuple(params.get("grid_color", (200, 200, 200))),
-            palette_name=params.get("palette", "mard_221"),
+            palette_name=_resolve_palette(params.get("palette", "mard_221")),
             show_color_legend=params.get("show_color_legend", True),
             show_row_col_labels=params.get("show_row_col_labels", True),
             save=False, cancel_callback=cb)
@@ -186,9 +206,14 @@ class CoreServer:
         base = f"perler_{int(time.time())}_{rid}.png"
         chart_path = os.path.join(OUTPUT_DIR, base)
         result.chart.save(chart_path)
+        finished_path = None
+        if result.finished is not None:
+            finished_path = os.path.join(OUTPUT_DIR, f"finished_{int(time.time())}_{rid}.png")
+            result.finished.save(finished_path)
         return {
             "chart_path": chart_path,
             "chart_size": list(result.chart.size),
+            "finished_path": finished_path,
             "finished_size": list(result.finished.size) if result.finished else None,
             "color_stats": result.color_stats,
             "total_beads": result.total_beads,
@@ -228,7 +253,7 @@ class CoreServer:
             grid_overrides=overrides,
             show_grid=params.get("show_grid", True),
             grid_color=tuple(params.get("grid_color", (200, 200, 200))),
-            palette_name=params.get("palette", "mard_221"),
+            palette_name=_resolve_palette(params.get("palette", "mard_221")),
             show_color_legend=params.get("show_color_legend", True),
             show_row_col_labels=params.get("show_row_col_labels", True),
             save=False)
@@ -238,9 +263,14 @@ class CoreServer:
         base = f"perler_edit_{int(time.time())}_{rid}.png"
         chart_path = os.path.join(OUTPUT_DIR, base)
         result.chart.save(chart_path)
+        finished_path = None
+        if result.finished is not None:
+            finished_path = os.path.join(OUTPUT_DIR, f"finished_edit_{int(time.time())}_{rid}.png")
+            result.finished.save(finished_path)
         return {
             "chart_path": chart_path,
             "chart_size": list(result.chart.size),
+            "finished_path": finished_path,
             "color_stats": result.color_stats,
             "total_beads": result.total_beads,
             "grid_w": result.grid_w,
@@ -252,7 +282,7 @@ class CoreServer:
         key = params.get("key", "")
         if not key:
             return []
-        path = os.path.join(tempfile_dir(), f"perler_track_{key}.json")
+        path = os.path.join(track_dir(), f"{key}.json")
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -265,7 +295,7 @@ class CoreServer:
         cells = params.get("cells") or []
         if not key:
             return
-        path = os.path.join(tempfile_dir(), f"perler_track_{key}.json")
+        path = os.path.join(track_dir(), f"{key}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(cells, f, ensure_ascii=False)
 

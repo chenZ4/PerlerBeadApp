@@ -3,7 +3,8 @@ import AppKit
 
 /// 色卡预览窗口（毛玻璃 + 分组网格）
 struct ColorChartView: View {
-    let paletteName: String
+    let paletteInternal: String
+    let paletteDisplay: String
     let engine: Engine?
     @Environment(\.dismiss) private var dismiss
 
@@ -43,7 +44,7 @@ struct ColorChartView: View {
 
     private var header: some View {
         HStack {
-            Text("🎨 \(paletteName)")
+            Text("🎨 \(paletteDisplay)")
                 .font(.title2.bold())
             Spacer()
             TextField("搜索色号/名称/HEX", text: $filter)
@@ -104,7 +105,7 @@ struct ColorCardView: View {
 extension ColorChartView {
     private func load() {
         guard let engine else { return }
-        engine.request(op: "palette_colors", params: ["internal": paletteName]) { result in
+        engine.request(op: "palette_colors", params: ["internal": paletteInternal]) { result in
             if case .success(let r) = result {
                 let codes = r["codes"] as? [String] ?? []
                 let names = r["names"] as? [String] ?? []

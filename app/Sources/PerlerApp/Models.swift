@@ -3,6 +3,7 @@ import Foundation
 struct GenerateResult: Decodable {
     let chartPath: String
     let chartSize: [Int]
+    let finishedPath: String?
     let finishedSize: [Int]?
     let colorStats: [String: ColorStat]
     let totalBeads: Int
@@ -15,6 +16,7 @@ struct GenerateResult: Decodable {
     enum CodingKeys: String, CodingKey {
         case chartPath = "chart_path"
         case chartSize = "chart_size"
+        case finishedPath = "finished_path"
         case finishedSize = "finished_size"
         case colorStats = "color_stats"
         case totalBeads = "total_beads"
@@ -28,6 +30,7 @@ struct GenerateResult: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         chartPath = try c.decode(String.self, forKey: .chartPath)
         chartSize = try c.decode([Int].self, forKey: .chartSize)
+        finishedPath = try c.decodeIfPresent(String.self, forKey: .finishedPath)
         finishedSize = try c.decodeIfPresent([Int].self, forKey: .finishedSize)
         colorStats = try c.decodeIfPresent([String: ColorStat].self, forKey: .colorStats) ?? [:]
         totalBeads = try c.decodeIfPresent(Int.self, forKey: .totalBeads) ?? 0

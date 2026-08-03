@@ -1,0 +1,381 @@
+import Foundation
+import AppKit
+
+/// 主界面交互逻辑（可测试：模拟用户操作 = 调用 VM 方法 + 真实引擎后端）
+@MainActor
+final class AppViewModel: ObservableObject {
+
+    // MARK: 引擎
+    @Published var engine: Engine?
+    @Published var statusText = "就绪"
+    @Published var isBusy = false
+    @Published var progress: Double = -1
+
+    // MARK: 参数
+    @Published var imagePath: String?
+    @Published var gridW = "29"
+    @Published var gridH = "29"
+    @Published var cellSize = "60"
+    @Published var paletteDisplay = "MARD 221 色"
+    @Published var selectedTemplate: String?
+    @Published var palettes: [PaletteInfo] = []
+    @Published var templates: [TemplateInfo] = []
+
+    // MARK: 特效（全部默认关闭）
+    @Published var outlineCellOn = false
+    @Published var outlineEdgeOn = false
+    @Published var grayscaleOn = false
+    @Published var ditherOn = false
+    @Published var darkChartOn = false
+    @Published var maxColorsOn = false
+    @Published var maxColorsValue = 12
+    @Published var presetOn = false
+    @Published var presetName = "pastel"
+
+    // MARK: 结果
+    @Published var chartImage: NSImage?
+    @Published var finishedImage: NSImage?
+    @Published private(set) var lastResult: GenerateResult?
+
+    // MARK: 编辑与进度
+    @Published var editMode = false
+    @Published var editColorCode = "H7"
+    @Published var trackMode = false
+    @Published private(set) var editHistory: [[String: Any]] = []
+    @Published private(set) var doneCells: Set<String> = []
+    @Published private(set) var trackedCount = 0
+    private var trackKey: String?
+
+    // MARK: 预览
+    @Published var zoom: Double = 100
+    @Published var fitToWindow = true
+    @Published var showFinished = false
+    @Published var offset = CGSize.zero
+    @Published var previewGeo = CGSize(width: 800, height: 600)
+
+    var paletteInternal: String {
+        palettes.first { $0.display == paletteDisplay }?.internalName ?? "mard_221"
+    }
+
+    var totalGrid: Int {
+        (lastResult?.gridW ?? 0) * (lastResult?.gridH ?? 0)
+    }
+
+    // MARK: - 初始化
+    func setup() {
+        guard let py = Engine.findPython() else {
+            statusText = "未找到 Python 引擎（需要 pindou 环境）"
+            return
+        }
+        guard let eng = Engine(pythonPath: py) else {
+            statusText = "引擎启动失败"
+            return
+        }
+        engine = eng
+        eng.ping { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.statusText = "引擎就绪"
+                self.loadPalettes()
+                self.loadTemplates()
+            case .failure(let e):
+                self.statusText = "引擎连接失败：\(e.localizedDescription)"
+            }
+        }
+    }
+
+    func loadPalettes() {
+        guard let eng = engine else { return }
+        eng.request(op: "palettes", params: [:]) { [weak self] result in
+            guard let self, case .success(let r) = result,
+                  let arr = r["palettes"] as? [[String: Any]] else { return }
+            let list = arr.compactMap { d -> PaletteInfo? in
+                guard let display = d["display"] as? String,
+                      let count = d["count"] as? Int else { return nil }
+                return PaletteInfo(display: display, count: count,
+                                   internalName: d["internal"] as? String ?? display)
+            }
+            self.palettes = list
+            if !list.isEmpty {
+                self.paletteDisplay = list.contains { $0.display == "MARD 221 色" }
+                    ? "MARD 221 色" : list[0].display
+            }
+        }
+    }
+
+    func loadTemplates() {
+        guard let eng = engine else { return }
+        eng.request(op: "templates", params: [:]) { [weak self] result in
+            guard let self, case .success(let r) = result,
+                  let arr = r["templates"] as? [[String: Any]] else { return }
+            self.templates = arr.compactMap { d in
+                guard let id = d["id"] as? String, let name = d["name"] as? String,
+                      let w = d["width"] as? Int, let h = d["height"] as? Int else { return nil }
+                return TemplateInfo(id: id, name: name, width: w, height: h)
+            }
+        }
+    }
+
+    // MARK: - 图片 / 模板
+    func setImagePath(_ path: String) {
+        imagePath = path
+        selectedTemplate = nil
+        trackKey = stableKey(path)
+        loadTrack()
+        statusText = "已选择图片"
+    }
+
+    func loadTemplate(_ id: String?) {
+        guard let id, let eng = engine else { return }
+        eng.request(op: "template_image", params: ["template_id": id]) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let r):
+                if let p = r["image_path"] as? String {
+                    self.imagePath = p
+                    self.selectedTemplate = id
+                    if let w = r["width"] as? Int { self.gridW = "\(w)" }
+                    if let h = r["height"] as? Int { self.gridH = "\(h)" }
+                    self.trackKey = self.stableKey("tpl_\(id)")
+                    self.loadTrack()
+                    self.syncPaletteToTemplate(id)
+                    self.statusText = "已加载模板"
+                }
+            case .failure(let e):
+                self.statusText = "模板加载失败：\(e.localizedDescription)"
+            }
+        }
+    }
+
+    /// 模板-色卡联动：模板 palette 名同步到选择器
+    private func syncPaletteToTemplate(_ templateId: String) {
+        guard let eng = engine else { return }
+        eng.request(op: "templates", params: [:]) { [weak self] result in
+            guard let self, case .success(let r) = result,
+                  let arr = r["templates"] as? [[String: Any]],
+                  let tpl = arr.first(where: { ($0["id"] as? String) == templateId }),
+                  let internalName = tpl["palette"] as? String else { return }
+            if let info = self.palettes.first(where: { $0.internalName == internalName }) {
+                self.paletteDisplay = info.display
+            }
+        }
+    }
+
+    // MARK: - 生成
+    func effectsParams() -> [[String: Any]] {
+        var effects: [[String: Any]] = []
+        if outlineCellOn { effects.append(["id": "outline_cell", "params": [:] as [String: Any]]) }
+        if outlineEdgeOn { effects.append(["id": "outline_edge", "params": [:] as [String: Any]]) }
+        if grayscaleOn { effects.append(["id": "grayscale", "params": [:] as [String: Any]]) }
+        if ditherOn { effects.append(["id": "dither", "params": [:] as [String: Any]]) }
+        if darkChartOn { effects.append(["id": "dark_chart", "params": [:] as [String: Any]]) }
+        if maxColorsOn { effects.append(["id": "max_colors", "params": ["max": maxColorsValue]]) }
+        if presetOn { effects.append(["id": "preset", "params": ["preset": presetName]]) }
+        return effects
+    }
+
+    func generate() {
+        guard let eng = engine, let path = imagePath else { return }
+        isBusy = true
+        progress = 0
+        statusText = "正在处理…"
+        var params: [String: Any] = [
+            "image_path": path,
+            "grid_w": Int(gridW) ?? 29,
+            "grid_h": Int(gridH) ?? 29,
+            "cell_size": Int(cellSize) ?? 60,
+            "palette": paletteInternal,
+            "show_finished": true,
+            "effects": effectsParams(),
+        ]
+        if selectedTemplate != nil { params["board"] = Int(gridW) ?? 29 }
+        eng.request(op: "generate", params: params,
+                    onProgress: { [weak self] p in
+                        Task { @MainActor in self?.progress = p }
+                    }) { [weak self] result in
+            guard let self else { return }
+            defer {
+                self.isBusy = false
+                self.progress = -1
+            }
+            switch result {
+            case .success(let r):
+                guard let data = try? JSONSerialization.data(withJSONObject: r),
+                      let gen = try? JSONDecoder().decode(GenerateResult.self, from: data) else {
+                    statusText = "解析结果失败"
+                    return
+                }
+                applyResult(gen)
+                statusText = "完成：\(gen.gridW)×\(gen.gridH) | \(gen.totalBeads) 颗"
+            case .failure(let e):
+                statusText = "生成失败：\(e.localizedDescription)"
+            }
+        }
+    }
+
+    private func applyResult(_ gen: GenerateResult) {
+        lastResult = gen
+        chartImage = NSImage(contentsOfFile: gen.chartPath)
+        if let fp = gen.finishedPath {
+            finishedImage = NSImage(contentsOfFile: fp)
+        } else {
+            finishedImage = nil
+        }
+        if trackKey != nil { loadTrack() }
+    }
+
+    // MARK: - 编辑
+    func handlePreviewTap(location: CGPoint) {
+        guard let img = chartImage, let result = lastResult else { return }
+        let geo = previewSize(img: img)
+        let imgX = (previewGeo.width - geo.width) / 2 + offset.width
+        let imgY = (previewGeo.height - geo.height) / 2 + offset.height
+        let px = Int((location.x - imgX) / geo.width * CGFloat(result.gridW))
+        let py = Int((location.y - imgY) / geo.height * CGFloat(result.gridH))
+        guard px >= 0, px < result.gridW, py >= 0, py < result.gridH else { return }
+
+        if trackMode {
+            toggleTrackedCell(x: px, y: py)
+        } else {
+            let code = editColorCode.trimmingCharacters(in: .whitespaces).uppercased()
+            guard !code.isEmpty else { return }
+            editHistory.append(["x": px, "y": py, "code": code])
+            applyEdits()
+        }
+    }
+
+    func undoEdit() {
+        guard let popped = editHistory.popLast() else { return }
+        let key = cellKey(popped)
+        doneCells.remove(key)
+        trackedCount = doneCells.count
+        applyEdits()
+    }
+
+    private func applyEdits() {
+        guard let eng = engine, let path = imagePath, let result = lastResult else { return }
+        isBusy = true
+        statusText = "正在应用编辑…"
+        eng.request(op: "edit", params: [
+            "image_path": path,
+            "grid_w": result.gridW,
+            "grid_h": result.gridH,
+            "cell_size": result.cellSize,
+            "palette": paletteInternal,
+            "effects": effectsParams(),
+            "overrides": editHistory,
+        ]) { [weak self] res in
+            guard let self else { return }
+            defer { self.isBusy = false }
+            switch res {
+            case .success(let r):
+                guard let data = try? JSONSerialization.data(withJSONObject: r),
+                      let gen = try? JSONDecoder().decode(GenerateResult.self, from: data) else {
+                    statusText = "编辑解析失败"
+                    return
+                }
+                applyResult(gen)
+                for edit in editHistory {
+                    doneCells.insert(cellKey(edit))
+                }
+                trackedCount = doneCells.count
+                saveTrack()
+                statusText = "已编辑：\(editHistory.count) 处 | 已完成 \(doneCells.count) 格"
+            case .failure(let e):
+                statusText = "编辑失败：\(e.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - 进度追踪
+    private func toggleTrackedCell(x: Int, y: Int) {
+        let key = "\(x):\(y)"
+        if doneCells.contains(key) {
+            doneCells.remove(key)
+        } else {
+            doneCells.insert(key)
+        }
+        trackedCount = doneCells.count
+        saveTrack()
+        statusText = "进度：\(doneCells.count)/\(totalGrid) 格"
+    }
+
+    private func cellKey(_ edit: [String: Any]) -> String {
+        "\(edit["x"] ?? 0):\(edit["y"] ?? 0)"
+    }
+
+    private func stableKey(_ path: String) -> String {
+        var h = UInt64(5381)
+        for b in path.utf8 {
+            h = (h &* 33) ^ UInt64(b)
+        }
+        return String(h, radix: 16)
+    }
+
+    private func saveTrack() {
+        guard let eng = engine, let key = trackKey else { return }
+        eng.request(op: "track_save",
+                    params: ["key": key, "cells": Array(doneCells)]) { _ in }
+    }
+
+    private func loadTrack() {
+        guard let eng = engine, let key = trackKey else {
+            doneCells = []
+            trackedCount = 0
+            return
+        }
+        eng.request(op: "track_load", params: ["key": key]) { [weak self] result in
+            guard let self, case .success(let r) = result else { return }
+            let cells = r["track"] as? [String] ?? []
+            self.doneCells = Set(cells)
+            self.trackedCount = cells.count
+        }
+    }
+
+    // MARK: - 预览
+    func previewSize(img: NSImage) -> CGSize {
+        let base = CGSize(width: img.size.width, height: img.size.height)
+        let scale: CGFloat
+        if fitToWindow {
+            scale = min(previewGeo.width / base.width, previewGeo.height / base.height)
+        } else {
+            scale = CGFloat(zoom) / 100.0
+        }
+        return CGSize(width: base.width * scale, height: base.height * scale)
+    }
+
+    // MARK: - 导出
+    func exportPNG(to path: String) {
+        guard let eng = engine, let result = lastResult else { return }
+        eng.request(op: "export_png",
+                    params: ["source_path": result.chartPath, "save_path": path]) { [weak self] res in
+            guard let self else { return }
+            switch res {
+            case .success: self.statusText = "PNG 已导出"
+            case .failure(let e): self.statusText = "PNG 导出失败：\(e.localizedDescription)"
+            }
+        }
+    }
+
+    func exportPDF(to path: String, includeBOM: Bool = true) {
+        guard let eng = engine, let result = lastResult else { return }
+        var params: [String: Any] = [
+            "source_path": result.chartPath, "save_path": path,
+            "mode": "a4", "cell_size": result.cellSize,
+        ]
+        if includeBOM { params["bom"] = result.colorStatsAny }
+        eng.request(op: "export_pdf", params: params) { [weak self] res in
+            guard let self else { return }
+            switch res {
+            case .success: self.statusText = "PDF 已导出（含材料清单）"
+            case .failure(let e): self.statusText = "PDF 导出失败：\(e.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - 重置
+    func resetPreviewOffset() {
+        offset = .zero
+    }
+}
