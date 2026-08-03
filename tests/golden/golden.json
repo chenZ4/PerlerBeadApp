@@ -1,0 +1,14 @@
+{
+  "source": "source.png",
+  "source_seed": 42,
+  "grid_w": 50,
+  "grid_h": 50,
+  "cell_size": 60,
+  "palette": "mard_221",
+  "finished_sha256": "422948eb17f5a11b75920f4ccc14aff1882047e24b8347282d4803664685f960",
+  "finished_size": [
+    3000,
+    2220
+  ],
+  "note": "纯色成品图（无字体），跨平台稳定；改动输出后运行 update_golden.py 更新"
+}

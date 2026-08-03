@@ -30,18 +30,24 @@ def report(name, ok, detail=""):
         print(f"  [FAIL] {name} {detail}")
 
 
+from core.settings import QUEUE_FILE, load_queue
 from ui.desktop_ui import DesktopUI
 
 root = tk.Tk()
 app = DesktopUI(root)
 root.update()
 
-# 打桩：替换所有文件对话框，避免阻塞
+# 打桩：替换所有文件对话框与消息框，测试全程零弹窗零交互
 from ui import desktop_ui as du
 du.filedialog.askopenfilename = lambda **kw: SRC
 saved_paths = []
 du.filedialog.asksaveasfilename = lambda **kw: os.path.join(TEST_DIR, kw.get("initialfile", "out.png"))
 du.filedialog.askdirectory = lambda **kw: BATCH_DIR
+du.messagebox.showinfo = lambda *a, **k: None
+du.messagebox.showwarning = lambda *a, **k: None
+du.messagebox.showerror = lambda *a, **k: None
+du.messagebox.askyesno = lambda *a, **k: True
+du.messagebox.askokcancel = lambda *a, **k: True
 app._ask_pdf_mode = lambda: "a4"
 app._show_result_dialog = lambda *a, **k: None
 
@@ -177,8 +183,52 @@ report("不同源图同尺寸导出为不同文件（不覆盖）", len(files2) 
        str(files2))
 app.clear_queue()
 
+print("== GUI: 批量取消（真实事件路径） ==")
+app.select_image()
+pump()
+app.enqueue_item()
+app.enqueue_item()
+app.enqueue_item()
+report("队列入队 3 项（取消测试）", len(app.queue_items) == 3)
+app.root.after(10, app._cancel_queue)
+app.process_queue()
+pump()
+report("批量中点击取消生效（事件被 update 处理）", app.is_processing is False,
+       f"is_processing={app.is_processing}")
+report("取消后队列状态复位", app._queue_cancel is False)
+app.clear_queue()
+
+print("== GUI: 队列旧格式迁移 ==")
+from core.settings import save_queue
+legacy_item = {
+    'image_path': SRC, 'width': 40, 'height': 40,
+    'ratio': '按原图比例（宽为基准）',
+    'canvas_size': 60, 'show_grid': True, 'show_labels': True, 'show_legend': True,
+    'grid_color': '#C8C8C8', 'palette': 'MARD 221 色', 'format': 'PNG',
+}
+save_queue([legacy_item])
+app.queue_items = [legacy_item]
+app.refresh_queue_list()
+app.process_queue()
+pump()
+report("旧格式队列项（canvas_size）处理不崩溃", True)
+app.clear_queue()
+if os.path.exists(QUEUE_FILE):
+    os.remove(QUEUE_FILE)
+
+print("== GUI: 处理中变更补生成 ==")
+app.select_image()
+pump()
+app.is_processing = True
+app._trigger_preview()
+report("处理中变更标记 pending", app._pending_regenerate is True)
+app.is_processing = False
+app.generate_preview()
+pump()
+pump()
+report("处理完成后自动补生成", app._pending_regenerate is False and app.processed_image is not None)
+
 print("== GUI: 队列持久化 ==")
-from core.settings import QUEUE_FILE, load_queue
 app.select_image()
 pump()
 app.enqueue_item()
@@ -299,6 +349,67 @@ app._on_preview_press(type("E", (), {"x": 10, "y": 10}))
 app._on_preview_drag(type("E", (), {"x": 60, "y": 60}))
 ox5, oy5 = app.preview_canvas.coords(item)
 report("适应窗口模式拖动无效（锁定居中）", ox5 == (cw - app._img_w) // 2, f"{ox5},{oy5}")
+
+print("== GUI: 大网格确认弹窗 ==")
+app.select_image()
+pump()
+app.entry_w.delete(0, tk.END)
+app.entry_w.insert(0, "250")
+app.entry_h.delete(0, tk.END)
+app.entry_h.insert(0, "250")
+before_img = app.processed_image
+orig_askyesno = du.messagebox.askyesno
+du.messagebox.askyesno = lambda *a, **k: False
+app.generate_preview(confirm_big=True)
+pump()
+report("大网格拒绝确认则不生成", app.processed_image is before_img)
+du.messagebox.askyesno = lambda *a, **k: True
+app.generate_preview(confirm_big=True)
+pump()
+report("大网格确认后正常生成", app.processed_image is not before_img)
+du.messagebox.askyesno = orig_askyesno
+app.entry_w.delete(0, tk.END)
+app.entry_w.insert(0, "50")
+app.entry_h.delete(0, tk.END)
+app.entry_h.insert(0, "50")
+app.generate_preview()
+pump()
+
+print("== GUI: 模态期间快捷键屏蔽 ==")
+triggered = []
+app._guarded(lambda: triggered.append(1))()
+report("非模态时快捷键正常触发", len(triggered) == 1)
+app._modal_active = True
+app._guarded(lambda: triggered.append(1))()
+report("模态期间快捷键被屏蔽", len(triggered) == 1)
+app._modal_active = False
+
+print("== GUI: 在文件夹中显示（subprocess 安全传参） ==")
+popen_calls = []
+orig_popen = du.subprocess.Popen
+du.subprocess.Popen = lambda *args, **kw: popen_calls.append(args) or object()
+app._show_in_folder("/tmp/带空格 名称.png")
+du.subprocess.Popen = orig_popen
+ok_calls = any(len(a) == 1 and isinstance(a[0], list) and a[0][0] in ("open", "explorer")
+               and a[0][-1] == "/tmp/带空格 名称.png" for a in popen_calls)
+report("_show_in_folder 使用列表参数调用", ok_calls, str(popen_calls))
+
+print("== GUI: 关闭窗口时的弹窗路径（防 TclError） ==")
+orig_ww = app.root.wait_window
+orig_ct = app._center_toplevel
+app.root.wait_window = lambda w: None
+app._center_toplevel = lambda w: None
+app._closing = True
+try:
+    mode = type(app)._ask_pdf_mode(app)
+    report("closing 时 PDF 模式返回 None 不抛错", mode is None, str(mode))
+    app._show_result_dialog("标题", "内容")
+    report("closing 时结果弹窗正常返回不抛错", True)
+except Exception as e:
+    report("closing 时弹窗路径不抛错", False, str(e))
+app._closing = False
+app.root.wait_window = orig_ww
+app._center_toplevel = orig_ct
 
 print("== GUI: 内存（10 次生成+渲染后无持续增长） ==")
 gc.collect()

@@ -75,12 +75,12 @@ def test_processor():
     src = make_source()
 
     result = proc.process_image(src, 50, 50, canvas_size=1500, save=False)
-    _, img, finished_img, stats, total, gw, gh, cell = result
-    report("50x50 生成成功", img is not None)
-    report("返回 7 元组含 cell_size", cell > 0)
-    report("网格尺寸正确", gw == 50 and gh == 50)
-    report("耗材总数 = 网格面积", total == gw * gh)
-    report("旧逻辑 cell = canvas//max", cell == 30, str(cell))
+    report("50x50 生成成功（GenerateResult）", result is not None)
+    img = result.chart
+    report("cell_size 字段正确", result.cell_size > 0)
+    report("网格尺寸正确", result.grid_w == 50 and result.grid_h == 50)
+    report("耗材总数 = 网格面积", result.total_beads == result.grid_w * result.grid_h)
+    report("旧逻辑 cell = canvas//max", result.cell_size == 30, str(result.cell_size))
 
     white_ratio = footer_dark_pixels(img)
     report("页脚统计文字完整可见（底部130px含文字像素）", white_ratio > 50,
@@ -90,49 +90,54 @@ def test_processor():
 
     result = proc.process_image(src, 50, 50, canvas_size=1500, show_row_col_labels=False,
                                 show_color_legend=False, save=False)
-    _, img2, _, stats2, total2, gw2, gh2, _ = result
-    report("关闭标号/图例后生成正常", img2 is not None and gw2 == 50)
-    report("无图例时画布紧凑", img2.size[1] < 1600, f"height={img2.size[1]}")
-    img2.close()
+    report("关闭标号/图例后生成正常", result is not None and result.grid_w == 50)
+    report("无图例时画布紧凑", result.chart.size[1] < 1600, f"height={result.chart.size[1]}")
+    result.chart.close()
 
     result = proc.process_image(src, 50, 50, canvas_size=1500, save=True)
-    save_path, img3, _, _, _, _, _, _ = result
-    report("save=True 落盘到固定 output 目录", os.path.isfile(save_path),
-           save_path)
-    report("输出路径为绝对路径", os.path.isabs(save_path))
-    img3.close()
+    report("save=True 落盘到固定 output 目录", os.path.isfile(result.save_path),
+           result.save_path)
+    report("输出路径为绝对路径", os.path.isabs(result.save_path))
+    result.chart.close()
 
     tall = make_source(100, 400)
     result = proc.process_image(tall, 30, 30, canvas_size=1500, save=False)
-    _, img4, _, _, _, gw4, gh4, _ = result
-    report("竖版图保持原始比例", abs(gw4 / gh4 - 0.25) < 0.01, f"{gw4}x{gh4}")
-    img4.close()
+    report("竖版图保持原始比例", abs(result.grid_w / result.grid_h - 0.25) < 0.01,
+           f"{result.grid_w}x{result.grid_h}")
+    result.chart.close()
 
     big = make_source(300, 300)
     result = proc.process_image(big, 150, 150, cell_size=60, save=False)
-    _, img5, _, _, _, gw5, gh5, cell5 = result
-    report("cell_size=60 解耦生效（每格 60px）", cell5 == 60 and gw5 == 150, f"cell={cell5}")
-    report("输出画布足够大（>= 9000px 宽）", img5.size[0] >= 9000, str(img5.size))
-    img5.close()
+    report("cell_size=60 解耦生效（每格 60px）", result.cell_size == 60 and result.grid_w == 150,
+           f"cell={result.cell_size}")
+    report("输出画布足够大（>= 9000px 宽）", result.chart.size[0] >= 9000, str(result.chart.size))
+    result.chart.close()
 
     result = proc.process_image(big, 300, 300, cell_size=60, save=False)
-    _, img6, _, _, _, _, _, cell6 = result
-    report("总边长 12000px 上限保护生效", cell6 == 40, f"cell={cell6} size={img6.size}")
-    img6.close()
+    report("总边长 12000px 上限保护生效", result.cell_size == 40,
+           f"cell={result.cell_size} size={result.chart.size}")
+    result.chart.close()
 
     result = proc.process_image(big, 150, 150, cell_size=60, save=False, show_finished=True)
-    _, img8, finished8, _, _, _, _, _ = result
-    report("成品效果图生成", finished8 is not None)
-    report("成品图为纯网格区尺寸", img8.size[0] > finished8.size[0], f"chart={img8.size} finished={finished8.size}")
-    report("成品图无页脚（高度更小）", finished8.size[1] < img8.size[1],
-           f"chart_h={img8.size[1]} finished_h={finished8.size[1]}")
-    img8.close()
-    if finished8:
-        finished8.close()
+    report("成品效果图生成", result.finished is not None)
+    report("成品图为纯网格区尺寸", result.chart.size[0] > result.finished.size[0],
+           f"chart={result.chart.size} finished={result.finished.size}")
+    report("成品图无页脚（高度更小）", result.finished.size[1] < result.chart.size[1],
+           f"chart_h={result.chart.size[1]} finished_h={result.finished.size[1]}")
+    report("成品图 4096px 降采样上限", result.finished.size[0] <= 4096,
+           str(result.finished.size))
+    result.chart.close()
+    result.finished.close()
 
     result = proc.process_image(big, 150, 150, cell_size=60, save=False, cancel_callback=lambda: True)
-    _, img7, _, _, _, _, _, _ = result
-    report("取消回调立即中止", img7 is None)
+    report("取消回调返回 None", result is None)
+
+    result = proc.process_image(big, 0, 0, cell_size=60, save=False)
+    report("grid=0 参数防护（不崩溃）", result is not None and result.grid_w >= 1)
+    result.chart.close()
+
+    result = proc.process_image(os.path.join(TEST_DIR, "nope.png"), 50, 50, save=False)
+    report("文件不存在返回 None", result is None)
 
 
 def test_colors_numpy():
@@ -164,7 +169,8 @@ def test_pdf():
     src = make_source()
 
     result = proc.process_image(src, 50, 50, canvas_size=1500, save=False)
-    _, img, _, _, _, _, _, cell = result
+    img = result.chart
+    cell = result.cell_size
 
     pdf_a4 = os.path.join(OUT_DIR, "a4.pdf")
     proc.export_pdf(img, pdf_a4, "a4", cell)
@@ -184,7 +190,8 @@ def test_pdf():
     report("1:1 导出无异常（含出血/裁剪线/页码栅格绘制）", os.path.getsize(pdf_1x1) > 0)
 
     result = proc.process_image(src, 20, 20, canvas_size=1500, save=False)
-    _, img_small, _, _, _, _, _, cell_small = result
+    img_small = result.chart
+    cell_small = result.cell_size
     pdf_1x1_small = os.path.join(OUT_DIR, "1x1_small.pdf")
     proc.export_pdf(img_small, pdf_1x1_small, "1x1", cell_small)
     pages_s, _ = pdf_info(pdf_1x1_small)
@@ -264,14 +271,56 @@ def test_memory():
     tracemalloc.start()
     for i in range(20):
         result = proc.process_image(src, 50, 50, canvas_size=1500, save=False)
-        _, img, _, _, _, _, _, _ = result
-        img.close()
+        result.chart.close()
+        if result.finished:
+            result.finished.close()
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     mb = 1024 * 1024
     report("20 次连续生成内存无持续累积（峰值 < 150MB）", peak < 150 * mb,
            f"peak={peak / mb:.1f}MB current={current / mb:.1f}MB")
     report("结束后驻留内存回归（< 60MB）", current < 60 * mb, f"current={current / mb:.1f}MB")
+
+
+def test_golden_and_perf():
+    print("== 测试6: Golden 回归 + 耗时基准 ==")
+    import hashlib
+    import json
+    import time
+
+    from core.processor import ImageProcessor
+
+    GOLDEN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "tests", "golden")
+    golden_file = os.path.join(GOLDEN_DIR, "golden.json")
+    source_file = os.path.join(GOLDEN_DIR, "source.png")
+    report("golden 文件存在", os.path.isfile(golden_file) and os.path.isfile(source_file))
+    if not (os.path.isfile(golden_file) and os.path.isfile(source_file)):
+        return
+
+    with open(golden_file, "r", encoding="utf-8") as f:
+        golden = json.load(f)
+
+    proc = ImageProcessor()
+    t0 = time.time()
+    result = proc.process_image(source_file, 50, 50, cell_size=60, show_finished=True, save=False)
+    dt50 = time.time() - t0
+    report("golden 生成耗时 < 5s（WARNING 级）", dt50 < 5.0, f"{dt50:.2f}s")
+
+    h = hashlib.sha256(result.finished.tobytes()).hexdigest()
+    report("golden 输出哈希一致（防无声回归）", h == golden['finished_sha256'],
+           f"expected={golden['finished_sha256'][:12]} got={h[:12]}")
+    report("golden 输出尺寸一致", list(result.finished.size) == golden['finished_size'],
+           str(result.finished.size))
+    result.chart.close()
+    result.finished.close()
+
+    t0 = time.time()
+    result = proc.process_image(source_file, 150, 150, cell_size=60, save=False)
+    dt150 = time.time() - t0
+    report("150x150 生成耗时 < 30s（WARNING 级）", dt150 < 30.0, f"{dt150:.2f}s")
+    result.chart.close()
+    print(f"    耗时: 50x50={dt50:.2f}s 150x150={dt150:.2f}s")
 
 
 def main():
@@ -282,6 +331,7 @@ def main():
     test_pdf()
     test_history()
     test_memory()
+    test_golden_and_perf()
     print("\n=== 结果汇总 ===")
     print(f"通过: {RESULT['passed']}   失败: {RESULT['failed']}")
     if RESULT["errors"]:

@@ -1,6 +1,7 @@
 # ui/desktop_ui.py
 
 import os
+import subprocess
 import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -16,9 +17,15 @@ from ui.fonts import is_mac, ui_font
 from ui.theme import ACCENT, apply_theme
 
 DEFAULT_GRID_COLOR = "#C8C8C8"
+DEFAULT_GRID_RGB = (200, 200, 200)
+MAX_RENDER_DIM = 8192
+MAX_GRID_SIZE = 500
+BIG_GRID_WARN = 40000
 RATIO_ORIGINAL = "按原图比例（宽为基准）"
 RATIO_FIT_BOX = "等比完整（适应框内）"
 RATIOS = [RATIO_ORIGINAL, RATIO_FIT_BOX, "1:1 (正方形)", "4:3", "3:4", "16:9", "9:16", "自定义"]
+
+PALETTE_MAP = {display: internal for display, internal in PALETTE_OPTIONS}
 
 
 class DesktopUI:
@@ -33,6 +40,8 @@ class DesktopUI:
         win_w = self.settings.get('window_w') or 0
         win_h = self.settings.get('window_h') or 0
         if win_w > 600 and win_h > 400:
+            win_w = min(win_w, max(800, self.screen_width - 60))
+            win_h = min(win_h, max(600, self.screen_height - 60))
             self.root.geometry(f"{win_w}x{win_h}")
         else:
             window_w = int(self.screen_width * 0.85)
@@ -69,6 +78,12 @@ class DesktopUI:
         self.queue_items = load_queue()
         self._queue_cancel = False
         self._queue_thumbs = []
+        self._thumb_cache = {}
+
+        # 处理中变更补生成
+        self._pending_regenerate = False
+        self._modal_active = False
+        self._closing = False
 
         self.setup_ui()
         self._setup_menu()
@@ -192,7 +207,8 @@ class DesktopUI:
         self.grid_color_var = tk.StringVar(value=self.settings.get('grid_color', DEFAULT_GRID_COLOR))
         self.entry_grid_color = ttk.Entry(frame_grid_color, textvariable=self.grid_color_var, width=12)
         self.entry_grid_color.pack(side=tk.LEFT, padx=10)
-        self.entry_grid_color.bind("<KeyRelease>", self._on_setting_change)
+        self.entry_grid_color.bind("<KeyRelease>", lambda e: self._trigger_preview())
+        self.entry_grid_color.bind("<FocusOut>", self._on_setting_change)
 
         # ===== 5. 操作按钮 =====
         self._create_section_title("🔧 操作")
@@ -204,7 +220,8 @@ class DesktopUI:
         self.btn_undo.pack(side=tk.LEFT, padx=5)
         self.btn_undo.config(state=tk.DISABLED)
 
-        self.btn_generate = ttk.Button(frame_buttons, text="🔄 生成", command=self.generate_preview, width=8)
+        self.btn_generate = ttk.Button(frame_buttons, text="🔄 生成",
+                                       command=lambda: self.generate_preview(confirm_big=True), width=8)
         self.btn_generate.pack(side=tk.LEFT, padx=5)
 
         self.btn_save = ttk.Button(self.scrollable_frame, text="💾 保存并加入历史",
@@ -251,7 +268,6 @@ class DesktopUI:
         self.queue_tree.heading("info", text="设置")
         self.queue_tree.column("info", width=130, anchor=tk.W)
         self.queue_tree.pack(fill=tk.X, pady=5)
-        self.queue_tree.bind("<<TreeviewSelect>>", lambda e: None)
 
         frame_queue_action = ttk.Frame(self.scrollable_frame)
         frame_queue_action.pack(fill=tk.X, pady=5)
@@ -355,6 +371,7 @@ class DesktopUI:
         self.root.config(menu=menubar)
 
     def _on_close(self):
+        self._closing = True
         self._persist_settings()
         self.root.destroy()
 
@@ -389,21 +406,27 @@ class DesktopUI:
         except Exception:
             self.lbl_cm_hint.config(text="")
 
+    def _guarded(self, handler):
+        """模态窗口激活时屏蔽快捷键"""
+        def wrapped(event=None):
+            if self._modal_active:
+                return
+            handler()
+        return wrapped
+
     def _setup_shortcuts(self):
-        mod = "Command" if is_mac() else "Control"
-        self.root.bind_all(f"<{mod}-o>", lambda e: self.select_image())
-        self.root.bind_all(f"<{mod}-s>", lambda e: self.save_to_history())
-        self.root.bind_all(f"<{mod}-p>", lambda e: self.export_pdf())
-        self.root.bind_all(f"<{mod}-e>", lambda e: self.export_png())
-        self.root.bind_all(f"<{mod}-equal>", lambda e: self._zoom_by(10))
-        self.root.bind_all(f"<{mod}-minus>", lambda e: self._zoom_by(-10))
-        if not is_mac():
-            self.root.bind_all("<Control-o>", lambda e: self.select_image())
-            self.root.bind_all("<Control-s>", lambda e: self.save_to_history())
-            self.root.bind_all("<Control-p>", lambda e: self.export_pdf())
-            self.root.bind_all("<Control-e>", lambda e: self.export_png())
-            self.root.bind_all("<Control-equal>", lambda e: self._zoom_by(10))
-            self.root.bind_all("<Control-minus>", lambda e: self._zoom_by(-10))
+        actions = {
+            'o': self.select_image,
+            's': self.save_to_history,
+            'p': self.export_pdf,
+            'e': self.export_png,
+            'equal': lambda: self._zoom_by(10),
+            'minus': lambda: self._zoom_by(-10),
+        }
+
+        for mod in ("Command", "Control"):
+            for key, handler in actions.items():
+                self.root.bind_all(f"<{mod}-{key}>", self._guarded(handler))
 
     def _zoom_by(self, delta_pct):
         if not self.processed_image:
@@ -421,11 +444,20 @@ class DesktopUI:
     def _show_in_folder(self, path):
         try:
             if sys.platform == "darwin":
-                os.system(f'open -R "{path}"')
+                subprocess.Popen(["open", "-R", path])
             elif os.name == "nt":
-                os.system(f'explorer /select,"{path}"')
+                subprocess.Popen(["explorer", "/select,", path])
         except Exception:
             pass
+
+    def _center_toplevel(self, win):
+        win.update_idletasks()
+        width = win.winfo_reqwidth()
+        height = win.winfo_reqheight()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - width) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - height) // 3
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        win.focus_set()
 
     def _show_result_dialog(self, title, text, path=None):
         win = tk.Toplevel(self.root)
@@ -433,6 +465,7 @@ class DesktopUI:
         win.transient(self.root)
         win.grab_set()
         win.resizable(False, False)
+        self._modal_active = True
 
         ttk.Label(win, text=text, wraplength=520, justify=tk.LEFT).pack(padx=24, pady=(18, 8))
 
@@ -440,6 +473,7 @@ class DesktopUI:
         btn_frame.pack(pady=12)
 
         def close():
+            self._modal_active = False
             try:
                 win.grab_release()
             except tk.TclError:
@@ -452,14 +486,11 @@ class DesktopUI:
                 side=tk.LEFT, padx=6)
         ttk.Button(btn_frame, text="关闭", command=close).pack(side=tk.LEFT, padx=6)
 
-        win.update_idletasks()
-        width = win.winfo_reqwidth()
-        height = win.winfo_reqheight()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - width) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - height) // 3
-        win.geometry(f"+{max(0, x)}+{max(0, y)}")
-        win.focus_set()
+        self._center_toplevel(win)
         self.root.wait_window(win)
+        self._modal_active = False
+        if self._closing:
+            return
 
     def _create_section_title(self, text):
         ttk.Label(self.scrollable_frame, text=text, style="Section.TLabel").pack(anchor=tk.W, pady=(15, 8))
@@ -510,7 +541,7 @@ class DesktopUI:
         self._update_cm_hint()
         self.btn_undo.config(state=tk.NORMAL if len(self.previous_states) > 0 else tk.DISABLED)
         self.generate_preview()
-        self.lbl_status.config(text="↩️ 已撤销", foreground="orange")
+        self.lbl_status.config(text="↩️ 已撤销", style="Status.Warn.TLabel")
 
     # ---------- 色卡窗口 ----------
     def open_color_chart(self):
@@ -563,7 +594,7 @@ class DesktopUI:
             h_str = self.entry_h.get().strip()
             w = int(w_str) if w_str else 50
             h = int(h_str) if h_str else 50
-        except:
+        except (TypeError, ValueError):
             self.is_calculating = False
             return
 
@@ -614,24 +645,15 @@ class DesktopUI:
         self.is_calculating = False
 
     def _update_palette_info(self):
-        palette_name = self.palette_var.get()
-        for display_name, internal_name in PALETTE_OPTIONS:
-            if display_name == palette_name:
-                palette = get_palette(internal_name)
-                self.lbl_palette_info.config(text=f"✓ 共 {len(palette.colors)} 种颜色")
-                break
+        internal = self._display_to_internal(self.palette_var.get())
+        palette = get_palette(internal)
+        self.lbl_palette_info.config(text=f"✓ 共 {len(palette.colors)} 种颜色")
+
+    def _display_to_internal(self, display_name):
+        return PALETTE_MAP.get(display_name, "mard_221")
 
     def _current_palette(self):
-        for display_name, internal_name in PALETTE_OPTIONS:
-            if display_name == self.palette_var.get():
-                return internal_name
-        return "mard_221"
-
-    def _palette_internal(self, display_name):
-        for display_name_, internal_name in PALETTE_OPTIONS:
-            if display_name_ == display_name:
-                return internal_name
-        return "mard_221"
+        return self._display_to_internal(self.palette_var.get())
 
     def _read_params(self):
         def _num(text, default, lo, hi):
@@ -641,21 +663,22 @@ class DesktopUI:
                 v = default
             return max(lo, min(hi, v))
 
-        w = _num(self.entry_w.get(), 50, 1, 500)
-        h = _num(self.entry_h.get(), 50, 1, 500)
+        w = _num(self.entry_w.get(), 50, 1, MAX_GRID_SIZE)
+        h = _num(self.entry_h.get(), 50, 1, MAX_GRID_SIZE)
         cell_px = _num(self.cell_px_var.get(), 60, 16, 160)
         show_grid = self.show_grid_var.get()
         show_labels = self.show_labels_var.get()
         show_legend = self.show_legend_var.get()
         try:
             grid_color = self.hex_to_rgb(self.grid_color_var.get())
-        except Exception:
+        except ValueError:
             self.lbl_status.config(text="⚠️ 网格颜色无效，已用灰色", style="Status.Warn.TLabel")
-            grid_color = (200, 200, 200)
+            grid_color = DEFAULT_GRID_RGB
         return w, h, cell_px, show_grid, show_labels, show_legend, grid_color
 
     def _trigger_preview(self):
         if self.is_processing:
+            self._pending_regenerate = True
             return
         if self.preview_timer:
             self.root.after_cancel(self.preview_timer)
@@ -705,49 +728,61 @@ class DesktopUI:
             return
         self._load_image_file(file_path)
 
-    def generate_preview(self):
+    def _generate_chart(self, show_finished=True, cancel_callback=None):
+        """按当前参数生成图纸，返回 GenerateResult 或 None"""
+        w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
+        return self.processor.process_image(
+            self.selected_file, w, h, cell_size=cell_px,
+            show_grid=show_grid, grid_color=grid_color,
+            palette_name=self._current_palette(), show_color_legend=show_legend,
+            show_row_col_labels=show_labels, show_finished=show_finished,
+            fit_box=(self.ratio_var.get() == RATIO_FIT_BOX),
+            save=False, cancel_callback=cancel_callback)
+
+    def _apply_result(self, result):
+        """把生成结果应用到界面状态与预览"""
+        self._replace_processed_image(result.chart, result.finished)
+        self.last_cell_size = result.cell_size
+        self.current_save_path = result.save_path
+        self.color_stats = result.color_stats
+        self.total_beads = result.total_beads
+        self._render_preview()
+        self._update_color_stats_display(result.total_beads, result.grid_w, result.grid_h)
+
+    def generate_preview(self, confirm_big=False):
         if self.is_processing:
             return
         if not self.selected_file:
             self.lbl_status.config(text="⚠️ 请先选择图片！", style="Status.Warn.TLabel")
             return
 
-        self.is_processing = True
-        try:
-            w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
-        except Exception as e:
-            self.lbl_status.config(text=f"❌ 参数错误：{e}", style="Status.Err.TLabel")
-            self.is_processing = False
-            return
+        if confirm_big:
+            w, h = self._grid_dims()
+            if w * h > BIG_GRID_WARN:
+                if not messagebox.askyesno(
+                        "大图纸确认",
+                        f"网格 {w}×{h} = {w * h} 颗豆子，生成可能需要较长时间。\n\n继续吗？"):
+                    return
 
+        self.is_processing = True
+        self._pending_regenerate = False
         self.lbl_status.config(text="⏳ 正在处理...", style="Status.Busy.TLabel")
         self.root.update_idletasks()
 
-        result = self.processor.process_image(
-            self.selected_file, w, h, cell_size=cell_px,
-            show_grid=show_grid, grid_color=grid_color,
-            palette_name=self._current_palette(), show_color_legend=show_legend,
-            show_row_col_labels=show_labels, show_finished=True,
-            fit_box=(self.ratio_var.get() == RATIO_FIT_BOX),
-            save=False)
-
-        save_path, img_obj, finished_img, color_stats, total_beads, grid_w, grid_h, cell_size = result
-
-        if img_obj:
-            self._replace_processed_image(img_obj, finished_img)
-            self.last_cell_size = cell_size
-            self.current_save_path = save_path
-            self.color_stats = color_stats
-            self.total_beads = total_beads
-            self._render_preview()
-            self._update_color_stats_display(total_beads, grid_w, grid_h)
-            self.lbl_status.config(
-                text=f"✅ 完成！{img_obj.width}x{img_obj.height} | 网格：{grid_w}x{grid_h}",
-                style="Status.OK.TLabel")
-        else:
-            self.lbl_status.config(text="❌ 处理失败", style="Status.Err.TLabel")
-
-        self.is_processing = False
+        try:
+            result = self._generate_chart()
+            if result is not None:
+                self._apply_result(result)
+                self.lbl_status.config(
+                    text=f"✅ 完成！{result.chart.width}x{result.chart.height} | 网格：{result.grid_w}x{result.grid_h}",
+                    style="Status.OK.TLabel")
+            else:
+                self.lbl_status.config(text="❌ 处理失败", style="Status.Err.TLabel")
+        finally:
+            self.is_processing = False
+            if self._pending_regenerate and self.selected_file:
+                self._pending_regenerate = False
+                self.preview_timer = self.root.after(50, self.generate_preview)
 
     def save_to_history(self):
         if self.is_processing:
@@ -756,12 +791,7 @@ class DesktopUI:
             messagebox.showwarning("提示", "请先选择图片！")
             return
 
-        try:
-            w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
-        except Exception as e:
-            messagebox.showerror("错误", f"参数错误：{e}")
-            return
-
+        w, h = self._grid_dims()
         default_name = f"perler_{w}x{h}_{self._current_palette()}.png"
         save_path = filedialog.asksaveasfilename(
             title="保存拼豆图纸",
@@ -776,37 +806,29 @@ class DesktopUI:
         self.lbl_status.config(text="⏳ 正在生成...", style="Status.Busy.TLabel")
         self.root.update_idletasks()
         try:
-            result = self.processor.process_image(
-                self.selected_file, w, h, cell_size=cell_px,
-                show_grid=show_grid, grid_color=grid_color,
-                palette_name=self._current_palette(), show_color_legend=show_legend,
-                show_row_col_labels=show_labels, save=False)
-            _, img_obj, finished_img, color_stats, total_beads, grid_w, grid_h, cell_size = result
-            if not img_obj:
+            result = self._generate_chart()
+            if result is None:
                 messagebox.showerror("错误", "生成失败")
                 return
-            img_obj.save(save_path)
-            self._replace_processed_image(img_obj, finished_img)
-            self.last_cell_size = cell_size
-            self.current_save_path = save_path
-            self.color_stats = color_stats
-            self.total_beads = total_beads
-            self._render_preview()
-            self._update_color_stats_display(total_beads, grid_w, grid_h)
-
+            result.chart.save(save_path)
+            self._apply_result(result)
+            w, h, cell_px, show_grid, _, _, grid_color = self._read_params()
             self.history_mgr.add_record(self.selected_file, save_path, w, h,
                                         self.ratio_var.get(), cell_px,
-                                        show_grid, grid_color, self.palette_var.get(), show_labels)
+                                        show_grid, grid_color, self.palette_var.get(),
+                                        self.show_labels_var.get())
             self.refresh_history_list()
 
             file_size = os.path.getsize(save_path) / 1024
             self._show_result_dialog(
                 "保存成功",
                 f"图片已保存至：\n{save_path}\n\n"
-                f"尺寸：{img_obj.width}x{img_obj.height} 像素\n"
+                f"尺寸：{result.chart.width}x{result.chart.height} 像素\n"
                 f"文件大小：{file_size:.1f} KB\n使用色卡：{self.palette_var.get()}\n"
-                f"总耗材：{total_beads} 颗豆子",
+                f"总耗材：{result.total_beads} 颗豆子",
                 save_path)
+            if self._closing:
+                return
             self.lbl_status.config(text="💾 已保存到历史记录", style="Status.OK.TLabel")
         finally:
             self.is_processing = False
@@ -818,12 +840,7 @@ class DesktopUI:
             messagebox.showwarning("提示", "请先选择图片！")
             return
 
-        try:
-            w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
-        except Exception as e:
-            messagebox.showerror("错误", f"参数错误：{e}")
-            return
-
+        w, h = self._grid_dims()
         default_name = f"perler_{w}x{h}_{self._current_palette()}.png"
         save_path = filedialog.asksaveasfilename(
             title="导出 PNG",
@@ -838,31 +855,23 @@ class DesktopUI:
         self.lbl_status.config(text="⏳ 正在导出 PNG...", style="Status.Busy.TLabel")
         self.root.update_idletasks()
         try:
-            result = self.processor.process_image(
-                self.selected_file, w, h, cell_size=cell_px,
-                show_grid=show_grid, grid_color=grid_color,
-                palette_name=self._current_palette(), show_color_legend=show_legend,
-                show_row_col_labels=show_labels, save=False)
-            _, img_obj, finished_img, color_stats, total_beads, grid_w, grid_h, cell_size = result
-            if not img_obj:
+            result = self._generate_chart()
+            if result is None:
                 messagebox.showerror("错误", "生成失败")
                 return
-            img_obj.save(save_path)
-            self._replace_processed_image(img_obj, finished_img)
-            self.last_cell_size = cell_size
-            self.color_stats = color_stats
-            self.total_beads = total_beads
-            self._render_preview()
-            self._update_color_stats_display(total_beads, grid_w, grid_h)
+            result.chart.save(save_path)
+            self._apply_result(result)
             file_size = os.path.getsize(save_path) / 1024
             self.lbl_status.config(text=f"🖼️ PNG 已导出：{os.path.basename(save_path)}",
                                    style="Status.OK.TLabel")
             self._show_result_dialog(
                 "导出成功",
                 f"PNG 已导出至：\n{save_path}\n\n"
-                f"尺寸：{img_obj.width}x{img_obj.height} 像素\n"
+                f"尺寸：{result.chart.width}x{result.chart.height} 像素\n"
                 f"文件大小：{file_size:.1f} KB",
                 save_path)
+            if self._closing:
+                return
         finally:
             self.is_processing = False
 
@@ -873,16 +882,11 @@ class DesktopUI:
             messagebox.showwarning("提示", "请先选择图片！")
             return
 
-        try:
-            w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
-        except Exception as e:
-            messagebox.showerror("错误", f"参数错误：{e}")
-            return
-
         mode = self._ask_pdf_mode()
         if mode is None:
             return
 
+        w, h = self._grid_dims()
         default_name = f"perler_{w}x{h}_{self._current_palette()}.pdf"
         save_path = filedialog.asksaveasfilename(
             title="导出 PDF",
@@ -897,35 +901,31 @@ class DesktopUI:
         self.lbl_status.config(text="⏳ 正在导出 PDF...", style="Status.Busy.TLabel")
         self.root.update_idletasks()
         try:
-            result = self.processor.process_image(
-                self.selected_file, w, h, cell_size=cell_px,
-                show_grid=show_grid, grid_color=grid_color,
-                palette_name=self._current_palette(), show_color_legend=show_legend,
-                show_row_col_labels=show_labels, save=False)
-            _, img_obj, finished_img, color_stats, total_beads, grid_w, grid_h, cell_size = result
-            if not img_obj:
+            result = self._generate_chart()
+            if result is None:
                 messagebox.showerror("错误", "生成失败")
                 return
-            self.processor.export_pdf(img_obj, save_path, mode, cell_size)
-            self._replace_processed_image(img_obj, finished_img)
-            self.last_cell_size = cell_size
-            self.color_stats = color_stats
-            self.total_beads = total_beads
-            self._render_preview()
-            self._update_color_stats_display(total_beads, grid_w, grid_h)
+            self.processor.export_pdf(result.chart, save_path, mode, result.cell_size)
+            self._apply_result(result)
             file_size = os.path.getsize(save_path) / 1024
             self.lbl_status.config(text=f"📄 PDF 已导出：{os.path.basename(save_path)}",
                                    style="Status.OK.TLabel")
             self._show_result_dialog(
                 "导出成功",
                 f"PDF 已导出至：\n{save_path}\n\n文件大小：{file_size:.1f} KB\n"
-                f"总耗材：{total_beads} 颗豆子",
+                f"总耗材：{result.total_beads} 颗豆子",
                 save_path)
+            if self._closing:
+                return
         except Exception as e:
             messagebox.showerror("导出失败", str(e))
             self.lbl_status.config(text=f"❌ 导出失败：{e}", style="Status.Err.TLabel")
         finally:
             self.is_processing = False
+
+    def _grid_dims(self):
+        params = self._read_params()
+        return params[0], params[1]
 
     def _ask_pdf_mode(self):
         win = tk.Toplevel(self.root)
@@ -933,6 +933,7 @@ class DesktopUI:
         win.transient(self.root)
         win.resizable(False, False)
         win.grab_set()
+        self._modal_active = True
 
         result = {"mode": None}
 
@@ -947,33 +948,24 @@ class DesktopUI:
         btn_frame = ttk.Frame(win)
         btn_frame.pack(pady=15)
 
-        def confirm():
-            result["mode"] = var.get()
+        def close(mode):
+            result["mode"] = mode
+            self._modal_active = False
             try:
                 win.grab_release()
             except tk.TclError:
                 pass
             win.destroy()
 
-        def cancel():
-            try:
-                win.grab_release()
-            except tk.TclError:
-                pass
-            win.destroy()
+        ttk.Button(btn_frame, text="确定", command=lambda: close(var.get()),
+                   style="Accent.TButton", width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=lambda: close(None), width=10).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(btn_frame, text="确定", command=confirm, style="Accent.TButton", width=10).pack(
-            side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="取消", command=cancel, width=10).pack(side=tk.LEFT, padx=5)
-
-        win.update_idletasks()
-        width = win.winfo_reqwidth()
-        height = win.winfo_reqheight()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - width) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - height) // 3
-        win.geometry(f"+{max(0, x)}+{max(0, y)}")
-        win.focus_set()
+        self._center_toplevel(win)
         self.root.wait_window(win)
+        self._modal_active = False
+        if self._closing:
+            return None
         return result["mode"]
 
     # ---------- 预览缩放 ----------
@@ -1033,7 +1025,7 @@ class DesktopUI:
         else:
             nw, nh = img.width, img.height
 
-        max_dim = 8192
+        max_dim = MAX_RENDER_DIM
         if nw > max_dim or nh > max_dim:
             s = min(max_dim / nw, max_dim / nh)
             nw = max(1, int(nw * s))
@@ -1051,6 +1043,7 @@ class DesktopUI:
             pass
         canvas = self.preview_canvas
         canvas.delete("all")
+        self._drag_start = None
         self._img_w = img.width
         self._img_h = img.height
         self._img_item = canvas.create_image(0, 0, image=self.photo_ref, anchor=tk.NW)
@@ -1149,25 +1142,29 @@ class DesktopUI:
         self.lbl_color_stats.config(text=text, foreground="black")
 
     def hex_to_rgb(self, hex_color):
-        hex_color = str(hex_color).lstrip('#')
-        return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+        text = str(hex_color).strip().lstrip('#')
+        if len(text) != 6:
+            raise ValueError(f"无效颜色值：{hex_color}")
+        try:
+            r = int(text[0:2], 16)
+            g = int(text[2:4], 16)
+            b = int(text[4:6], 16)
+        except ValueError:
+            raise ValueError(f"无效颜色值：{hex_color}")
+        return (r, g, b)
 
     def _hex_to_rgb_safe(self, hex_color):
         try:
             return self.hex_to_rgb(hex_color)
-        except Exception:
-            return (200, 200, 200)
+        except ValueError:
+            return DEFAULT_GRID_RGB
 
     # ---------- 批量队列 ----------
     def enqueue_item(self):
         if not self.selected_file:
             messagebox.showwarning("提示", "请先选择图片！")
             return
-        try:
-            w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
-        except Exception as e:
-            messagebox.showerror("错误", f"参数错误：{e}")
-            return
+        w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
         item = {
             'image_path': self.selected_file,
             'width': w, 'height': h,
@@ -1184,11 +1181,14 @@ class DesktopUI:
         self.lbl_queue_status.config(text=f"队列共 {len(self.queue_items)} 项", foreground="black")
 
     def _make_thumb(self, path):
+        if path in self._thumb_cache:
+            return self._thumb_cache[path]
         try:
             img = Image.open(path)
             img.thumbnail((48, 48))
             photo = ImageTk.PhotoImage(img)
             img.close()
+            self._thumb_cache[path] = photo
             return photo
         except Exception:
             return None
@@ -1249,107 +1249,119 @@ class DesktopUI:
         self._queue_cancel = False
         self.btn_queue_start.config(state=tk.DISABLED)
         self.btn_queue_cancel.config(state=tk.NORMAL)
-        total = len(self.queue_items)
+        items = list(self.queue_items)
+        total = len(items)
         success = []
         failed = []
         cancelled = 0
         self.progress.config(maximum=total, value=0)
-        self.lbl_queue_status.config(text="⏳ 开始批量处理...", foreground="blue")
-        self.root.update_idletasks()
+        self.lbl_queue_status.config(text="⏳ 开始批量处理...", style="Status.Busy.TLabel")
+        self.root.update()
 
-        for idx, item in enumerate(self.queue_items):
-            if self._queue_cancel:
-                cancelled = total - idx
-                break
-            fmt = item['format']
-            if fmt == "PDF(A4适应)":
-                mode = "a4"
-                ext = "pdf"
-                mode_tag = "_a4"
-            elif fmt == "PDF(1:1实物)":
-                mode = "1x1"
-                ext = "pdf"
-                mode_tag = "_1x1"
-            else:
-                mode = None
-                ext = "png"
-                mode_tag = ""
-
-            palette_internal = self._palette_internal(item['palette'])
-            grid_color = self._hex_to_rgb_safe(item['grid_color'])
-            src_name = os.path.splitext(os.path.basename(item['image_path']))[0]
-            base = f"perler_{src_name}_{item['width']}x{item['height']}_{palette_internal}{mode_tag}"
-            out_path = self._unique_path(out_dir, base, ext)
-            img = None
-            try:
-                result = self.processor.process_image(
-                    item['image_path'], item['width'], item['height'],
-                    cell_size=item['cell_px'], show_grid=item['show_grid'],
-                    grid_color=grid_color, palette_name=palette_internal,
-                    show_color_legend=item['show_legend'],
-                    show_row_col_labels=item['show_labels'],
-                    fit_box=(item['ratio'] == RATIO_FIT_BOX),
-                    save=False, cancel_callback=lambda: self._queue_cancel)
-                _, img, _, _, _, _, _, cell = result
+        try:
+            for idx, item in enumerate(items):
                 if self._queue_cancel:
-                    cancelled = total - idx - 1
+                    cancelled = total - idx
                     break
-                if not img:
-                    raise RuntimeError("生成失败")
-                if mode:
-                    self.processor.export_pdf(img, out_path, mode, cell)
+                fmt = item['format']
+                if fmt == "PDF(A4适应)":
+                    mode = "a4"
+                    ext = "pdf"
+                    mode_tag = "_a4"
+                elif fmt == "PDF(1:1实物)":
+                    mode = "1x1"
+                    ext = "pdf"
+                    mode_tag = "_1x1"
                 else:
-                    img.save(out_path)
-                success.append(out_path)
-                self.history_mgr.add_record(item['image_path'], out_path,
-                                            item['width'], item['height'], item['ratio'],
-                                            item['cell_px'], item['show_grid'],
-                                            item['grid_color'], item['palette'], item['show_labels'])
-            except Exception as e:
-                failed.append((os.path.basename(item['image_path']), str(e)))
-            finally:
-                if img is not None:
-                    try:
-                        img.close()
-                    except Exception:
-                        pass
-            self.progress.config(value=idx + 1)
-            self.lbl_queue_status.config(
-                text=f"⏳ 处理中 {idx + 1}/{total}：{os.path.basename(out_path)}", foreground="blue")
-            self.root.update_idletasks()
+                    mode = None
+                    ext = "png"
+                    mode_tag = ""
 
-        self.refresh_history_list()
-        self.progress.config(value=total)
-        self.btn_queue_start.config(state=tk.NORMAL)
-        self.btn_queue_cancel.config(state=tk.DISABLED)
-        self.is_processing = False
-        self._queue_cancel = False
+                palette_internal = self._display_to_internal(item['palette'])
+                grid_color = self._hex_to_rgb_safe(item['grid_color'])
+                try:
+                    cell_px = int(item.get('cell_px') or item.get('canvas_size') or 60)
+                    grid_w = int(item.get('width') or 50)
+                    grid_h = int(item.get('height') or 50)
+                except (TypeError, ValueError):
+                    cell_px, grid_w, grid_h = 60, 50, 50
+                src_name = os.path.splitext(os.path.basename(item['image_path']))[0]
+                base = f"perler_{src_name}_{grid_w}x{grid_h}_{palette_internal}{mode_tag}"
+                out_path = self._unique_path(out_dir, base, ext)
+                img = None
+                try:
+                    result = self.processor.process_image(
+                        item['image_path'], grid_w, grid_h,
+                        cell_size=cell_px, show_grid=item['show_grid'],
+                        grid_color=grid_color, palette_name=palette_internal,
+                        show_color_legend=item['show_legend'],
+                        show_row_col_labels=item['show_labels'],
+                        fit_box=(item['ratio'] == RATIO_FIT_BOX),
+                        save=False, cancel_callback=lambda: self._queue_cancel)
+                    if result is None:
+                        if self._queue_cancel:
+                            cancelled = total - idx
+                            break
+                        raise RuntimeError("生成失败")
+                    if self._queue_cancel:
+                        cancelled = total - idx
+                        break
+                    img = result.chart
+                    if mode:
+                        self.processor.export_pdf(img, out_path, mode, result.cell_size)
+                    else:
+                        img.save(out_path)
+                    success.append(out_path)
+                    self.history_mgr.add_record(item['image_path'], out_path,
+                                                grid_w, grid_h, item['ratio'],
+                                                cell_px, item['show_grid'],
+                                                item['grid_color'], item['palette'],
+                                                item['show_labels'])
+                except Exception as e:
+                    failed.append((os.path.basename(item['image_path']), str(e)))
+                finally:
+                    if img is not None:
+                        try:
+                            img.close()
+                        except Exception:
+                            pass
+                self.progress.config(value=idx + 1)
+                self.lbl_queue_status.config(
+                    text=f"⏳ 处理中 {idx + 1}/{total}：{os.path.basename(out_path)}", style="Status.Busy.TLabel")
+                self.root.update()
+        finally:
+            self.refresh_history_list()
+            self.progress.config(value=total)
+            self.btn_queue_start.config(state=tk.NORMAL)
+            self.btn_queue_cancel.config(state=tk.DISABLED)
+            self.is_processing = False
+            self._queue_cancel = False
 
         if cancelled:
             self.lbl_queue_status.config(
                 text=f"⏹ 已取消：成功 {len(success)}，失败 {len(failed)}，剩余 {cancelled}",
-                foreground="orange")
+                style="Status.Warn.TLabel")
             msg = f"批量处理已取消\n\n✅ 成功 {len(success)} 项\n❌ 失败 {len(failed)} 项\n⏹ 剩余 {cancelled} 项未处理"
             if failed:
                 msg += "\n\n失败明细：\n" + "\n".join(f"{name}: {err}" for name, err in failed)
             messagebox.showwarning("批量已取消", msg)
         elif failed:
             self.lbl_queue_status.config(
-                text=f"⚠️ 完成：成功 {len(success)}，失败 {len(failed)}", foreground="orange")
+                text=f"⚠️ 完成：成功 {len(success)}，失败 {len(failed)}", style="Status.Warn.TLabel")
             msg = f"批量处理完成\n\n✅ 成功 {len(success)} 项：\n" + "\n".join(success)
             msg += "\n\n❌ 失败 " + str(len(failed)) + " 项：\n" + "\n".join(
                 f"{name}: {err}" for name, err in failed)
             messagebox.showwarning("批量完成（有失败）", msg)
         else:
             self.lbl_queue_status.config(
-                text=f"✅ 批量完成：成功 {len(success)} 项", foreground="green")
+                text=f"✅ 批量完成：成功 {len(success)} 项", style="Status.OK.TLabel")
             messagebox.showinfo("批量完成", f"全部 {len(success)} 项导出成功：\n{out_dir}")
 
     # ---------- 历史记录 ----------
     def refresh_history_list(self):
         self.list_history.delete(0, tk.END)
         for i, record in enumerate(self.history_mgr.get_list()):
-            text = f"[{i}] {record['time']} - {record['width']}x{record['height']} ({record['palette']})"
+            text = f"[{i}] {record.get('time', '?')} - {record.get('width', '?')}x{record.get('height', '?')} ({record.get('palette', '?')})"
             self.list_history.insert(tk.END, text)
 
     def load_history_item(self, event):
@@ -1364,7 +1376,7 @@ class DesktopUI:
         record = self.history_mgr.get_record(index)
         if not record:
             return
-        if not os.path.exists(record['image_path']):
+        if not os.path.exists(record.get('image_path', '')):
             messagebox.showerror("错误", "原图片已不存在")
             return
 
@@ -1390,7 +1402,7 @@ class DesktopUI:
             self._replace_original_image(img)
         except Exception:
             self._replace_original_image(None)
-        self.lbl_status.config(text=f"📋 已加载历史 [{index}]，自动生成预览...", foreground="blue")
+        self.lbl_status.config(text=f"📋 已加载历史 [{index}]，自动生成预览...", style="Status.Busy.TLabel")
         self.generate_preview()
 
     def delete_selected_history(self):
@@ -1402,10 +1414,10 @@ class DesktopUI:
         if messagebox.askyesno("确认", "确定要删除这条历史记录吗？"):
             self.history_mgr.delete_record(index)
             self.refresh_history_list()
-            self.lbl_status.config(text="🗑️ 已删除历史记录", foreground="orange")
+            self.lbl_status.config(text="🗑️ 已删除历史记录", style="Status.Warn.TLabel")
 
     def clear_history(self):
         if messagebox.askyesno("确认", "确定要清除所有历史记录吗？\n此操作不可恢复！"):
             self.history_mgr.clear_history()
             self.refresh_history_list()
-            self.lbl_status.config(text="🗑️ 历史记录已清空", foreground="orange")
+            self.lbl_status.config(text="🗑️ 历史记录已清空", style="Status.Warn.TLabel")

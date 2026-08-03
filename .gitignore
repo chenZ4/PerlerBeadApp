@@ -368,3 +368,4 @@ history.json
 .idea/
 app_settings.json
 queue_state.json
+.venv/

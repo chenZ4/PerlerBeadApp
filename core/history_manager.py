@@ -18,7 +18,7 @@ class HistoryManager:
             try:
                 with open(LEGACY_HISTORY_FILE, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)
-            except:
+            except (IOError, OSError, ValueError):
                 self.history = []
             self._migrate_history()
             self.save_history()
@@ -28,7 +28,7 @@ class HistoryManager:
             try:
                 with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)
-            except:
+            except (IOError, OSError, ValueError):
                 self.history = []
         else:
             self.history = []

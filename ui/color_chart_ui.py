@@ -291,7 +291,7 @@ class ColorChartWindow:
                 return 7
             cols = width // (self.card_width + 10)
             return max(6, min(cols, 9))
-        except:
+        except Exception:
             return 7
 
     def _toggle_group(self, group_name):

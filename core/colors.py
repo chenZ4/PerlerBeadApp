@@ -21,6 +21,8 @@ class ColorPalette:
     def closest_indices(self, pil_img):
         """numpy 向量化最近色匹配，返回 (H,W) 色卡索引数组，零误差"""
         import numpy as np
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
         colors = np.asarray(self.colors, dtype=np.int32)
         arr = np.asarray(pil_img, dtype=np.int32)
         h, w, _ = arr.shape
