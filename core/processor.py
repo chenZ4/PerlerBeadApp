@@ -442,18 +442,37 @@ class ImageProcessor:
         info_x = (total_width - info_w) // 2
         draw.text((info_x, footer_y + 100), info_text, fill=info_color, font=info_font)
 
-    def export_pdf(self, pil_img, save_path, mode="a4", cell_size_px=None):
-        """导出 PDF：a4=适应A4单页, 1x1=1:1实物大小(BEAD_MM/颗)多页拼接"""
+    def export_pdf(self, pil_img, save_path, mode="a4", cell_size_px=None,
+                   bom=None, bw=False):
+        """导出 PDF：a4=适应A4单页, 1x1=1:1实物大小(BEAD_MM/颗)多页拼接
+
+        bom: 材料清单 color_stats（可选，追加材料页在最前）
+        bw: 黑白打印模式（灰度增强，色号文字更清晰）
+        """
+        if bw:
+            from PIL import ImageEnhance
+            pil_img = pil_img.convert("L").convert("RGB")
+            pil_img = ImageEnhance.Contrast(pil_img).enhance(1.4)
+
         if mode == "1x1":
-            return self._export_pdf_1x1(pil_img, save_path, cell_size_px)
-        return self._export_pdf_a4(pil_img, save_path)
+            pages = self._export_pdf_1x1_pages(pil_img, cell_size_px)
+        else:
+            pages = [self._export_pdf_a4_page(pil_img)]
+
+        if bom:
+            pages = self._pdf_bom_pages(bom) + pages
+
+        dpi = 300
+        pages[0].save(save_path, "PDF", resolution=dpi,
+                      save_all=True, append_images=pages[1:])
+        return save_path
 
     @staticmethod
     def _a4_page_size(dpi):
         return int(A4_MM[0] / 25.4 * dpi), int(A4_MM[1] / 25.4 * dpi)
 
-    def _export_pdf_a4(self, pil_img, save_path):
-        dpi = 150
+    def _export_pdf_a4_page(self, pil_img):
+        dpi = 300
         page_w, page_h = self._a4_page_size(dpi)
         margin = int(10 / 25.4 * dpi)
         avail_w = page_w - margin * 2
@@ -466,10 +485,46 @@ class ImageProcessor:
 
         page = Image.new("RGB", (page_w, page_h), GRID_WHITE)
         page.paste(resized, ((page_w - new_w) // 2, (page_h - new_h) // 2))
-        page.save(save_path, "PDF", resolution=dpi)
-        return save_path
+        return page
 
-    def _export_pdf_1x1(self, pil_img, save_path, cell_size_px):
+    def _pdf_bom_pages(self, color_stats):
+        """材料清单页（300dpi A4）：色块 + 色号 + 名称 + 数量 + 占比"""
+        dpi = 300
+        page_w, page_h = self._a4_page_size(dpi)
+        margin = int(12 / 25.4 * dpi)
+        rows = sorted(color_stats.items(), key=lambda x: -x[1]['count'])
+        total = sum(v['count'] for v in color_stats.values()) or 1
+
+        pages = []
+        row_h = int(15 / 25.4 * dpi)
+        title_h = int(14 / 25.4 * dpi)
+        per_page = (page_h - margin * 2 - title_h) // row_h
+
+        font_title = self._get_font(64, bold=True)
+        font_row = self._get_font(44)
+        font_small = self._get_font(36)
+
+        for start in range(0, len(rows), per_page):
+            page = Image.new("RGB", (page_w, page_h), GRID_WHITE)
+            draw = ImageDraw.Draw(page)
+            draw.text((margin, margin), "材料清单", fill=(0, 120, 215), font=font_title)
+
+            block = int(11 / 25.4 * dpi)
+            y = margin + title_h
+            for code, info in rows[start:start + per_page]:
+                draw.rounded_rectangle(
+                    [margin, y, margin + block, y + block],
+                    radius=12, fill=info['rgb'], outline=(200, 200, 200), width=2)
+                draw.text((margin + block + int(20 / 25.4 * dpi), y + 4),
+                          f"{code}  {info['name']}", fill=(0, 0, 0), font=font_row)
+                pct = info['count'] / total * 100
+                draw.text((margin + block + int(20 / 25.4 * dpi), y + block - int(55 / 25.4 * dpi)),
+                          f"{info['count']} 颗  ({pct:.1f}%)", fill=(100, 100, 100), font=font_small)
+                y += row_h
+            pages.append(page)
+        return pages
+
+    def _export_pdf_1x1_pages(self, pil_img, cell_size_px):
         if not cell_size_px or cell_size_px <= 0:
             raise ValueError("缺少网格单元尺寸，无法按 1:1 实物大小导出")
         dpi = 300
@@ -514,9 +569,7 @@ class ImageProcessor:
                 draw.text((page_w - bbox[2] - margin, page_h - bbox[3] - margin // 2),
                           pageno, fill=(150, 150, 150), font=font)
                 pages.append(page)
-
-        pages[0].save(save_path, "PDF", resolution=dpi, save_all=True, append_images=pages[1:])
-        return save_path
+        return pages
 
     def _draw_row_col_labels(self, draw, grid_w, grid_h, start_x, start_y, cell_size,
                              label_margin, dark=False):

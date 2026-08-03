@@ -8,11 +8,12 @@ import json
 import os
 import queue
 import sys
-import tempfile
 import threading
 import time
 
-from core.colors import PALETTE_OPTIONS, get_palette
+import numpy as np
+
+from core.colors import PALETTE_OPTIONS, _PALETTE_CACHE, get_palette
 from core.effects import list_effects
 from core.history_manager import HistoryManager
 from core.processor import ImageProcessor, OUTPUT_DIR
@@ -20,6 +21,11 @@ from core.settings import load_queue, load_settings, save_queue, save_settings
 from core.version import APP_VERSION
 
 PROGRESS_THROTTLE = 0.02  # 每 2% 发一次进度事件
+
+
+def tempfile_dir():
+    import tempfile
+    return tempfile.gettempdir()
 
 
 class CoreServer:
@@ -46,6 +52,8 @@ class CoreServer:
             return {"ok": True, **self._generate(rid, params)}
         if op == "export_png":
             return {"ok": True, **self._export_png(params)}
+        if op == "export_bom":
+            return {"ok": True, **self._export_bom(params)}
         if op == "export_pdf":
             return {"ok": True, **self._export_pdf(params)}
         if op == "palettes":
@@ -56,6 +64,21 @@ class CoreServer:
             palette = get_palette(params.get("internal", "mard_221"))
             return {"ok": True, "codes": palette.codes, "names": palette.names,
                     "colors": palette.colors, "hex": palette.hex_codes}
+        if op == "my_colors_get":
+            from core.my_colors import load_my_colors
+            data = load_my_colors()
+            return {"ok": True, "my_colors": data}
+        if op == "my_colors_save":
+            from core.my_colors import save_my_colors
+            save_my_colors(params.get("colors") or [],
+                           params.get("names"), params.get("codes"))
+            _PALETTE_CACHE.pop("my_colors", None)
+            return {"ok": True}
+        if op == "my_colors_clear":
+            from core.my_colors import clear_my_colors
+            clear_my_colors()
+            _PALETTE_CACHE.pop("my_colors", None)
+            return {"ok": True}
         if op == "effects":
             return {"ok": True, "effects": list_effects()}
         if op == "settings_get":
@@ -71,6 +94,21 @@ class CoreServer:
         if op == "queue_save":
             save_queue(params.get("items") or [])
             return {"ok": True}
+        if op == "templates":
+            from core.templates import list_templates
+            return {"ok": True, "templates": list_templates()}
+        if op == "template_image":
+            from core.templates import load_template, template_to_image
+            tpl = load_template(params.get("template_id", ""))
+            if tpl is None:
+                return {"ok": False, "error": "模板不存在"}
+            img = template_to_image(tpl)
+            if img is None:
+                return {"ok": False, "error": "模板数据无效"}
+            path = os.path.join(tempfile_dir(), f"tpl_{params.get('template_id')}.png")
+            img.save(path)
+            return {"ok": True, "image_path": path, "width": img.width,
+                    "height": img.height}
         raise ValueError(f"未知操作: {op}")
 
     # ---------- 生成 ----------
@@ -99,14 +137,27 @@ class CoreServer:
         self._cancelled.discard(rid)
         self._last_progress[rid] = 0
 
+        image_path = params["image_path"]
+        grid_w = params.get("grid_w", 50)
+        grid_h = params.get("grid_h", 50)
+        # 板数网格：按 29/58/87 板自动适配比例
+        board = params.get("board")
+        if board:
+            from PIL import Image as _Img
+            with _Img.open(image_path) as im:
+                iw, ih = im.size
+            board = int(board)
+            grid_w = board
+            grid_h = max(1, round(board * ih / iw))
+
         def cb(y, total):
             self._emit_progress(rid, y, total)
             return self._cancel_check(rid)
 
         result = self.processor.process_image(
-            params["image_path"],
-            grid_w=params.get("grid_w", 50),
-            grid_h=params.get("grid_h", 50),
+            image_path,
+            grid_w=grid_w,
+            grid_h=grid_h,
             cell_size=params.get("cell_size"),
             fit_box=params.get("fit_box", False),
             show_finished=params.get("show_finished", True),
@@ -142,13 +193,35 @@ class CoreServer:
 
     # ---------- 导出 ----------
     def _export_png(self, params):
+        from PIL import Image
         src = params["source_path"]
         out = params["save_path"]
-        from PIL import Image
         img = Image.open(src)
+        if params.get("transparent"):
+            rgba = img.convert("RGBA")
+            arr = np.asarray(rgba).astype(np.int32).copy()
+            dist = np.abs(arr[..., :3] - 255).sum(-1)
+            arr[..., 3][dist <= 12] = 0
+            img = Image.fromarray(arr.astype(np.uint8), "RGBA")
         img.save(out)
         img.close()
         return {"save_path": out}
+
+    def _export_bom(self, params):
+        """导出材料清单 CSV：code,name,rgb,count,percent"""
+        import csv
+        stats = params.get("stats") or {}
+        save_path = params["save_path"]
+        rows = sorted(stats.items(), key=lambda x: -x[1]["count"])
+        total = sum(v["count"] for v in stats.values()) or 1
+        with open(save_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["色号", "名称", "R", "G", "B", "数量", "占比%"])
+            for code, info in rows:
+                rgb = info.get("rgb", (0, 0, 0))
+                writer.writerow([code, info.get("name", ""), rgb[0], rgb[1], rgb[2],
+                                 info["count"], round(info["count"] / total * 100, 1)])
+        return {"save_path": save_path}
 
     def _export_pdf(self, params):
         from PIL import Image
@@ -156,7 +229,9 @@ class CoreServer:
         try:
             self.processor.export_pdf(img, params["save_path"],
                                       params.get("mode", "a4"),
-                                      params.get("cell_size"))
+                                      params.get("cell_size"),
+                                      bom=params.get("bom"),
+                                      bw=params.get("bw", False))
         finally:
             img.close()
         return {"save_path": params["save_path"]}
