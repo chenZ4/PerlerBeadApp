@@ -153,14 +153,17 @@ def test_colors_numpy():
             px[x, y] = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
     idx = p.closest_indices(img)
     mismatch = 0
+    wr, wg, wb = (0.299, 0.587, 0.114)
     for y in range(60):
         for x in range(60):
             r, g, b = px[x, y]
             best = min(range(len(p.colors)),
-                       key=lambda i: (r - p.colors[i][0]) ** 2 + (g - p.colors[i][1]) ** 2 + (b - p.colors[i][2]) ** 2)
+                       key=lambda i: (r - p.colors[i][0]) ** 2 * wr
+                       + (g - p.colors[i][1]) ** 2 * wg
+                       + (b - p.colors[i][2]) ** 2 * wb)
             if idx[y, x] != best:
                 mismatch += 1
-    report("numpy 匹配与暴力法 100% 一致", mismatch == 0, f"mismatch={mismatch}")
+    report("numpy 加权匹配与暴力法 100% 一致", mismatch == 0, f"mismatch={mismatch}")
 
 
 def test_pdf():
@@ -322,6 +325,113 @@ def test_hex_to_rgb():
     report("_hex_to_rgb_safe 非法回退灰色", True)
 
 
+def test_core_server():
+    print("== 测试7: core_server 协议层 ==")
+    import json as _json
+    import subprocess
+    import sys as _sys
+    import time as _time
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    proc = subprocess.Popen(
+        [_sys.executable, os.path.join(root, "core_server.py")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+    def req(rid, op, params=None):
+        proc.stdin.write(_json.dumps({"id": rid, "op": op, "params": params or {}}) + "\n")
+        proc.stdin.flush()
+        while True:
+            line = proc.stdout.readline()
+            msg = _json.loads(line)
+            if msg.get("id") == rid and "event" not in msg:
+                return msg
+
+    def close():
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+
+    try:
+        r = req(1, "ping")
+        report("ping → pong + 版本", r.get("ok") and r.get("pong") and r.get("version"),
+               str(r))
+
+        r = req(2, "palettes")
+        report("palettes 返回 4 套色卡", r.get("ok") and len(r["palettes"]) == 4,
+               str(len(r.get("palettes", []))))
+
+        r = req(3, "palette_colors", {"internal": "mard_221"})
+        report("palette_colors 返回 221 色", r.get("ok") and len(r["colors"]) == 221)
+
+        r = req(4, "effects")
+        report("effects 返回特效清单", r.get("ok") and isinstance(r.get("effects"), dict))
+
+        src = make_source(300, 300)
+        r = req(5, "generate", {"image_path": src, "grid_w": 100, "grid_h": 100,
+                                "cell_size": 60, "show_finished": True})
+        ok = (r.get("ok") and os.path.isfile(r.get("chart_path", ""))
+              and r["grid_w"] == 100 and r["cell_size"] == 60 and r["total_beads"] > 0)
+        report("generate 返回图纸与统计", ok, f"ok={r.get('ok')}")
+        if ok:
+            r2 = req(6, "export_png", {"source_path": r["chart_path"],
+                                       "save_path": os.path.join(OUT_DIR, "sv_png.png")})
+            report("export_png 导出文件", r2.get("ok") and os.path.isfile(r2["save_path"]))
+            r3 = req(7, "export_pdf", {"source_path": r["chart_path"],
+                                       "save_path": os.path.join(OUT_DIR, "sv_pdf.pdf"),
+                                       "mode": "a4", "cell_size": 60})
+            report("export_pdf 导出文件", r3.get("ok") and os.path.isfile(r3["save_path"]))
+
+        proc.stdin.write(_json.dumps({"id": 8, "op": "generate",
+                                      "params": {"image_path": src, "grid_w": 300,
+                                                 "grid_h": 300, "cell_size": 60}}) + "\n")
+        proc.stdin.flush()
+        _time.sleep(0.9)
+        proc.stdin.write(_json.dumps({"id": 8, "op": "cancel"}) + "\n")
+        proc.stdin.flush()
+        events = []
+        while True:
+            line = proc.stdout.readline()
+            msg = _json.loads(line)
+            if msg.get("id") == 8 and "event" not in msg:
+                break
+            events.append(msg)
+        has_progress = any(m.get("event") == "progress" for m in events)
+        report("生成中进度事件", has_progress, f"events={len(events)}")
+        report("生成中取消生效（返回 cancelled）", msg.get("cancelled") is True,
+               str(msg))
+
+        r = req(9, "history", {"action": "list"})
+        before = len(r["records"])
+        req(10, "history", {"action": "add", "record": {
+            "image_path": "/tmp/a.jpg", "save_path": "/tmp/a.png", "width": 10,
+            "height": 10, "ratio": "按原图比例（宽为基准）", "cell_px": 60,
+            "show_grid": True, "grid_color": "#C8C8C8", "palette": "MARD 221 色",
+            "show_labels": True}})
+        r = req(11, "history", {"action": "list"})
+        report("history add/list", len(r["records"]) == before + 1)
+        req(12, "history", {"action": "delete", "index": 0})
+        r = req(13, "history", {"action": "list"})
+        report("history delete", len(r["records"]) == before)
+        req(14, "history", {"action": "clear"})
+        r = req(15, "history", {"action": "list"})
+        report("history clear", len(r["records"]) == 0)
+
+        req(16, "settings_set", {"settings": {"cell_px": "72"}})
+        r = req(17, "settings_get")
+        report("settings set/get", r.get("settings", {}).get("cell_px") == "72")
+        req(18, "settings_set", {"settings": {"cell_px": "60"}})
+
+        req(19, "queue_save", {"items": [{"image_path": "/tmp/q.jpg", "width": 20}]})
+        r = req(20, "queue_load")
+        report("queue save/load", r.get("ok") and len(r["items"]) == 1)
+        req(21, "queue_save", {"items": []})
+
+        r = req(22, "nope_op")
+        report("未知操作返回 error", r.get("ok") is False and r.get("error"))
+    finally:
+        close()
 def test_golden_and_perf():
     print("== 测试6: Golden 回归 + 耗时基准 ==")
     import hashlib
@@ -373,6 +483,7 @@ def main():
     test_history()
     test_memory()
     test_golden_and_perf()
+    test_core_server()
     print("\n=== 结果汇总 ===")
     print(f"通过: {RESULT['passed']}   失败: {RESULT['failed']}")
     if RESULT["errors"]:

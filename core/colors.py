@@ -1,5 +1,9 @@
 # core/colors.py
 
+# 感知加权 RGB（人眼敏感度）：R 0.299 / G 0.587 / B 0.114
+RGB_WEIGHTS = (0.299, 0.587, 0.114)
+
+
 class ColorPalette:
     def __init__(self, palette_name="basic"):
         self.palette_name = palette_name
@@ -19,21 +23,22 @@ class ColorPalette:
         return self._hex_codes
 
     def closest_indices(self, pil_img):
-        """numpy 向量化最近色匹配，返回 (H,W) 色卡索引数组，零误差"""
+        """numpy 向量化加权最近色匹配，返回 (H,W) 色卡索引数组，零误差"""
         import numpy as np
         if pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")
-        colors = np.asarray(self.colors, dtype=np.int32)
-        arr = np.asarray(pil_img, dtype=np.int32)
-        h, w, _ = arr.shape
+        w = np.asarray(RGB_WEIGHTS, dtype=np.float32)
+        colors = np.asarray(self.colors, dtype=np.float32)
+        arr = np.asarray(pil_img, dtype=np.float32)
+        h, w_, _ = arr.shape
         flat = arr.reshape(-1, 3)
         out = np.empty(flat.shape[0], dtype=np.int32)
         step = 8192
         for start in range(0, flat.shape[0], step):
             chunk = flat[start:start + step]
             diff = chunk[:, None, :] - colors[None, :, :]
-            out[start:start + chunk.shape[0]] = (diff * diff).sum(-1).argmin(-1)
-        return out.reshape(h, w)
+            out[start:start + chunk.shape[0]] = ((diff * diff) * w).sum(-1).argmin(-1)
+        return out.reshape(h, w_)
 
     def load_palette(self, palette_name):
         """拼豆色卡 - 带色号字母"""
@@ -220,13 +225,17 @@ class ColorPalette:
             self.codes = ["X1", "X2"]
 
     def find_closest_color(self, r, g, b):
-        """找到色卡中最接近的颜色（暴力法，备用路径）"""
+        """找到色卡中最接近的颜色（加权距离，备用路径）"""
+        wr, wg, wb = RGB_WEIGHTS
         min_dist = float('inf')
         closest_index = 0
 
         for i, color in enumerate(self.colors):
             cr, cg, cb = color
-            dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+            dr = r - cr
+            dg = g - cg
+            db = b - cb
+            dist = dr * dr * wr + dg * dg * wg + db * db * wb
             if dist < min_dist:
                 min_dist = dist
                 closest_index = i

@@ -81,6 +81,7 @@ class ImageProcessor:
     def process_image(self, image_path, grid_w, grid_h, canvas_size=1500,
                       cell_size=None, max_canvas=MAX_CANVAS,
                       fit_box=False, show_finished=False,
+                      effects=None,
                       show_grid=True, grid_color=GRID_DEFAULT, grid_width=1,
                       palette_name="mard_221", show_color_legend=True,
                       show_row_col_labels=True, save=True,
@@ -91,6 +92,7 @@ class ImageProcessor:
         max_canvas: 输出总边长上限保护
         fit_box: True 时按请求框等比完整放入（取小），False 时按较宽一侧为基准
         show_finished: True 时额外渲染一张纯色成品效果图（预览用，4096px 上限降采样）
+        effects: [{"id": ..., "params": {...}}] 特效链（全部默认关闭）
         cancel_callback: 每行检测的取消回调，返回 True 则中止
         返回: GenerateResult；失败/取消返回 None
         """
@@ -100,6 +102,15 @@ class ImageProcessor:
             with Image.open(image_path) as opened:
                 img = opened.convert("RGB")
             orig_w, orig_h = img.size
+
+            # 0. 特效：几何变形 + 预处理（作用于原图）
+            if effects:
+                from core.effects import EffectContext, apply_phase
+                ctx = EffectContext(palette=None, grid_w=0, grid_h=0,
+                                    cell_size=0, engine=self)
+                img = apply_phase(effects, "geometric", img, ctx)
+                img = apply_phase(effects, "preprocess", img, ctx)
+                orig_w, orig_h = img.size
 
             # 1. 保持原始比例下采样
             scale = min(grid_w / orig_w, grid_h / orig_h)
@@ -124,6 +135,7 @@ class ImageProcessor:
             # 3. 颜色映射 + 统计
             grid_codes = [[None] * final_grid_w for _ in range(final_grid_h)]
             grid_colors = [[None] * final_grid_w for _ in range(final_grid_h)]
+            grid_idx = [[0] * final_grid_w for _ in range(final_grid_h)]
             color_stats = {}
 
             try:
@@ -133,8 +145,13 @@ class ImageProcessor:
                 index_map = None
 
             for y in range(final_grid_h):
-                if cancel_callback and cancel_callback():
-                    return None
+                if cancel_callback:
+                    try:
+                        cancelled = cancel_callback(y, final_grid_h)
+                    except TypeError:
+                        cancelled = cancel_callback()
+                    if cancelled:
+                        return None
                 for x in range(final_grid_w):
                     if index_map is not None:
                         closest_idx = int(index_map[y, x])
@@ -147,6 +164,7 @@ class ImageProcessor:
                             palette.find_closest_color(r, g, b)
                     grid_colors[y][x] = closest_rgb
                     grid_codes[y][x] = closest_code
+                    grid_idx[y][x] = closest_idx
 
                     if closest_code not in color_stats:
                         color_stats[closest_code] = {
@@ -156,6 +174,22 @@ class ImageProcessor:
                     color_stats[closest_code]["count"] += 1
 
             total_beads = sum(info['count'] for info in color_stats.values())
+
+            # 3.5 特效：网格阶段（作用于映射后的 grid 索引矩阵）
+            if effects:
+                from core.effects import EffectContext, apply_phase
+                ctx = EffectContext(palette=palette, grid_w=final_grid_w,
+                                    grid_h=final_grid_h, cell_size=0, engine=self)
+                import numpy as np
+                idx_mat = np.asarray(grid_idx, dtype=np.int32)
+                idx_mat = apply_phase(effects, "grid", idx_mat, ctx)
+                for y in range(final_grid_h):
+                    for x in range(final_grid_w):
+                        ci = int(idx_mat[y, x])
+                        if 0 <= ci < len(palette.colors):
+                            grid_colors[y][x] = palette.colors[ci]
+                            grid_codes[y][x] = palette.codes[ci].strip()
+                            grid_idx[y][x] = ci
 
             # 4. 计算画布尺寸（每格像素与格子数解耦）
             if cell_size and cell_size > 0:
@@ -180,8 +214,18 @@ class ImageProcessor:
             total_width = max(draw_width + label_margin * 2, 1000)
             total_height = label_margin * 2 + draw_height + legend_height
 
-            # 6. 创建画布
-            final_img = Image.new('RGB', (total_width, total_height), GRID_WHITE)
+            # 6. 创建画布（特效 chart 阶段可修改渲染参数）
+            render_opts = {
+                "background": GRID_WHITE,
+                "grid_color": grid_color,
+                "show_grid": show_grid,
+            }
+            if effects:
+                from core.effects import EffectContext, apply_phase
+                ctx = EffectContext(palette=palette, grid_w=final_grid_w,
+                                    grid_h=final_grid_h, cell_size=cell_size, engine=self)
+                render_opts = apply_phase(effects, "chart", render_opts, ctx) or render_opts
+            final_img = Image.new('RGB', (total_width, total_height), render_opts["background"])
             draw = ImageDraw.Draw(final_img)
 
             # 7. 计算网格起始位置
@@ -207,8 +251,13 @@ class ImageProcessor:
                 finished_draw = ImageDraw.Draw(finished_img)
 
             for y in range(final_grid_h):
-                if cancel_callback and cancel_callback():
-                    return None
+                if cancel_callback:
+                    try:
+                        cancelled = cancel_callback(y, final_grid_h)
+                    except TypeError:
+                        cancelled = cancel_callback()
+                    if cancelled:
+                        return None
                 for x in range(final_grid_w):
                     x1 = start_x + x * cell_size
                     y1 = start_y + y * cell_size
@@ -225,7 +274,7 @@ class ImageProcessor:
                             fill=color)
 
                     if show_grid:
-                        draw.rectangle([x1, y1, x2, y2], outline=grid_color, width=grid_width)
+                        draw.rectangle([x1, y1, x2, y2], outline=render_opts["grid_color"], width=grid_width)
 
                     if cell_size >= FONT_MIN_CELL:
                         code = grid_codes[y][x]
