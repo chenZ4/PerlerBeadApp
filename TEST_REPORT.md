@@ -63,3 +63,43 @@ conda run -n pindou python tests/gui_smoke.py     # GUI 冒烟（67 项，零弹
 
 ## 结论
 121 项测试全部通过（GUI 测试全程零弹窗、零人工交互），冻结版 v1.0.0 满足交付条件。
+
+---
+
+# 2.0 交付记录（2026-08-03，dev-2.0 分支）
+
+## 测试终态（全自动，零人工交互）
+
+| 套件 | 通过 | 说明 |
+|---|---|---|
+| `tests/run_tests.py` | 107 | 引擎：协议层/特效库/色卡文件化/MyColors/模板/BOM/编辑 |
+| `tests/gui_smoke.py` | 67 | Tk 版回归保底（零弹窗） |
+| `swift test` | 5 | SwiftUI 壳协议层 + 编辑/追踪 |
+| Tk / Swift app 启动 | ✅ | 均验证 |
+| **合计** | **179 项** | 全绿 |
+
+## 2.0 新增功能
+
+### 引擎层（core_server 服务化，JSON 协议）
+- stdio 行协议：请求/响应/进度事件/即时取消（读线程处理）
+- **特效库 14 个**（全部默认关闭+参数 schema）：邻接描边、线稿描边、黑白、抖动(Floyd-Steinberg)、深色底、亮度/对比度/饱和度、限色数、风格预设×5（马卡龙/Preppy/万圣节/圣诞/Cottagecore）、大头(chibi/OpenCV)、赛璐璐、霓虹、双色调、背景去除(透明空格)、镜像、裁剪
+- 加权 RGB 匹配（感知权重）
+- **色卡 JSON 文件化**（data/palettes/*.json 动态加载+校验+兜底）
+- **My Colors 自定义调色板**（粘贴色号/重命名/只用我的颜色生成）
+- 板数网格（29/58/87）、BOM 材料清单（CSV+PDF 材料页）、PDF 黑白打印模式、内置模板库×6、透明 PNG
+
+### SwiftUI 壳（Mac 原生 + 玻璃设计）
+- 毛玻璃材质面板（.ultraThinMaterial/.regularMaterial）+ 圆角卡片，深浅色自动适配
+- 预览：适应窗口/缩放滑块/拖动平移/成品效果切换
+- 色卡窗口：分组网格 + 搜索 + 点击复制（毛玻璃）
+- 手动格子编辑：点击换色/撤销（引擎 overrides 增量更新）
+- 进度追踪：自动保存续做（track_save/load）
+- 导出 PNG/PDF（含 BOM 页）
+
+## 数据与依赖
+- `data/palettes/`（4 套色卡 JSON）、`data/templates/`（6 模板）、`my_colors.json`（用户色卡，gitignore）
+- `requirements.txt`：Pillow==12.3.0 / numpy==2.4.6 / tkinterdnd2==0.6.2 / opencv-python==4.14.0
+- 运行：`cd app && swift run`（SwiftUI）或 `conda run -n pindou python main.py`（Tk 保底）
+
+## 回滚
+- master + tag v1.0.0 保持 1.0 冻结版；2.0 在 dev-2.0 分支，失败 `git checkout v1.0.0` 即回滚
