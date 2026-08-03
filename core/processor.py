@@ -512,9 +512,10 @@ class ImageProcessor:
             block = int(11 / 25.4 * dpi)
             y = margin + title_h
             for code, info in rows[start:start + per_page]:
+                rgb = tuple(info['rgb'])
                 draw.rounded_rectangle(
                     [margin, y, margin + block, y + block],
-                    radius=12, fill=info['rgb'], outline=(200, 200, 200), width=2)
+                    radius=12, fill=rgb, outline=(200, 200, 200), width=2)
                 draw.text((margin + block + int(20 / 25.4 * dpi), y + 4),
                           f"{code}  {info['name']}", fill=(0, 0, 0), font=font_row)
                 pct = info['count'] / total * 100
