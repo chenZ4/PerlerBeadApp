@@ -5,18 +5,29 @@ _EFFECTS = {}
 
 
 def register(spec: EffectSpec, handler):
-    """注册特效：spec 定义元数据与参数 schema，handler 为阶段处理函数"""
+    """注册特效：spec 定义元数据，handler 为阶段处理函数或 {阶段: 函数} 映射"""
     _EFFECTS[spec.id] = (spec, handler)
 
 
+def _phase_handler(handler, spec, phase):
+    if isinstance(handler, dict):
+        return handler.get(phase)
+    return handler if spec.category == phase else None
+
+
 def list_effects():
-    """返回 {id: spec}，供协议层/UI 展示"""
-    return {eid: spec for eid, (spec, _) in _EFFECTS.items()}
+    """返回 {id: spec_dict}，可 JSON 序列化，供协议层/UI 展示"""
+    return {eid: spec.to_dict() for eid, (spec, _) in _EFFECTS.items()}
 
 
 def get_spec(effect_id):
     item = _EFFECTS.get(effect_id)
     return item[0] if item else None
+
+
+def has_effect(effects, effect_id):
+    """effects 配置中是否包含指定特效"""
+    return any(e.get("id") == effect_id for e in (effects or []))
 
 
 def _coerce_params(params, schema):
@@ -66,8 +77,9 @@ def apply_phase(effects, phase, target, ctx=None):
         if not item:
             continue
         spec, handler = item
-        if spec.category != phase:
+        fn = _phase_handler(handler, spec, phase)
+        if fn is None:
             continue
         params = _coerce_params(e.get("params") or {}, spec.params)
-        target = handler(target, params, ctx)
+        target = fn(target, params, ctx)
     return target

@@ -16,6 +16,16 @@ class EffectSpec:
         """供 UI/协议层使用的参数 schema"""
         return self.params
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "category": self.category,
+            "params": self.params,
+            "requires_opencv": self.requires_opencv,
+            "description": self.description,
+        }
+
 
 @dataclass
 class EffectContext:

@@ -40,6 +40,36 @@ class ColorPalette:
             out[start:start + chunk.shape[0]] = ((diff * diff) * w).sum(-1).argmin(-1)
         return out.reshape(h, w_)
 
+    def closest_indices_dithered(self, pil_img, strength=1.0):
+        """Floyd-Steinberg 误差扩散匹配：渐变更柔和，返回 (H,W) 索引矩阵"""
+        import numpy as np
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        w = np.asarray(RGB_WEIGHTS, dtype=np.float32)
+        colors = np.asarray(self.colors, dtype=np.float32)
+        arr = np.asarray(pil_img, dtype=np.float32).copy()
+        h, w_, _ = arr.shape
+        out = np.empty((h, w_), dtype=np.int32)
+        scale = float(strength)
+        for y in range(h):
+            row = arr[y]
+            for x in range(w_):
+                r, g, b = row[x]
+                diff = np.array([r, g, b], dtype=np.float32)[None, :] - colors
+                idx = int(((diff * diff) * w).sum(-1).argmin())
+                out[y, x] = idx
+                err = np.array([r, g, b], dtype=np.float32) - colors[idx]
+                err = err * scale
+                if x + 1 < w_:
+                    row[x + 1] += err * (7 / 16)
+                if y + 1 < h:
+                    if x > 0:
+                        arr[y + 1, x - 1] += err * (3 / 16)
+                    arr[y + 1, x] += err * (5 / 16)
+                    if x + 1 < w_:
+                        arr[y + 1, x + 1] += err * (1 / 16)
+        return out
+
     def load_palette(self, palette_name):
         """拼豆色卡 - 带色号字母"""
 

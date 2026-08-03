@@ -83,8 +83,13 @@ class CoreServer:
             self._emit({"id": rid, "event": "progress", "progress": round(p, 3)})
 
     def _emit(self, msg):
+        try:
+            line = json.dumps(msg, ensure_ascii=False)
+        except TypeError:
+            line = json.dumps({"id": msg.get("id"), "ok": False,
+                               "error": "响应包含不可序列化对象"})
         with self._out_lock:
-            sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            sys.stdout.write(line + "\n")
             sys.stdout.flush()
 
     def _cancel_check(self, rid):

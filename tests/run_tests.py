@@ -52,7 +52,7 @@ def footer_dark_pixels(img, height=130):
     w, h = img.size
     crop = img.crop((0, h - height, w, h))
     dark = 0
-    for c in crop.getdata():
+    for c in crop.get_flattened_data():
         if sum(c) < 450:
             dark += 1
     return dark
@@ -473,6 +473,104 @@ def test_golden_and_perf():
     print(f"    耗时: 50x50={dt50:.2f}s 150x150={dt150:.2f}s")
 
 
+def test_effects():
+    print("== 测试7b: 特效库 ==")
+    from core.effects import list_effects, has_effect
+
+    src = make_source(200, 200)
+    proc = ImageProcessor()
+    expected_ids = {"outline_cell", "outline_edge", "grayscale", "adjust",
+                    "dither", "dark_chart", "max_colors", "preset"}
+    registered = set(list_effects().keys())
+    report("8 个特效全部注册", expected_ids <= registered,
+           f"missing={expected_ids - registered}")
+
+    # 邻接描边：描边色（近黑）出现在网格中
+    r = proc.process_image(src, 40, 40, cell_size=40, save=False,
+                           effects=[{"id": "outline_cell", "params": {}}])
+    stats = r.color_stats
+    black_codes = [c for c, i in stats.items() if sum(i['rgb']) < 200]
+    report("邻接描边产生描边色", len(black_codes) > 0, str(black_codes))
+    r.chart.close()
+
+    # 线稿描边（跨阶段）
+    r = proc.process_image(src, 40, 40, cell_size=40, save=False,
+                           effects=[{"id": "outline_edge", "params": {"threshold": 120}}])
+    report("线稿描边不崩溃且正常输出", r is not None)
+    r.chart.close()
+
+    # 灰度：输出颜色全部为灰阶
+    r = proc.process_image(src, 30, 30, cell_size=40, save=False,
+                           effects=[{"id": "grayscale", "params": {}}])
+    all_gray = all(abs(c['rgb'][0] - c['rgb'][1]) <= 20
+                   and abs(c['rgb'][1] - c['rgb'][2]) <= 20
+                   for c in r.color_stats.values())
+    report("灰度特效输出灰阶", all_gray and len(r.color_stats) >= 1,
+           str({k: v['rgb'] for k, v in r.color_stats.items()}))
+    r.chart.close()
+
+    # 抖动：与不抖动颜色分布不同（渐变图更明显）
+    grad = Image.new("RGB", (200, 200))
+    px = grad.load()
+    for y in range(200):
+        for x in range(200):
+            px[x, y] = (x, y, 128)
+    grad_path = os.path.join(TEST_DIR, "grad.png")
+    grad.save(grad_path)
+    r1 = proc.process_image(grad_path, 40, 40, cell_size=40, save=False)
+    r2 = proc.process_image(grad_path, 40, 40, cell_size=40, save=False,
+                            effects=[{"id": "dither", "params": {"strength": 1.0}}])
+    report("抖动改变颜色映射", r1.color_stats.keys() != r2.color_stats.keys()
+           or len(r1.color_stats) != len(r2.color_stats))
+    r1.chart.close()
+    r2.chart.close()
+
+    # 限色数：颜色数 ≤ 上限
+    r = proc.process_image(grad_path, 40, 40, cell_size=40, save=False,
+                           effects=[{"id": "max_colors", "params": {"max": 6}}])
+    report("限色数 ≤ 6", len(r.color_stats) <= 6, str(len(r.color_stats)))
+    r.chart.close()
+
+    # 风格预设：颜色限制在预设色集
+    r = proc.process_image(grad_path, 40, 40, cell_size=40, save=False,
+                           effects=[{"id": "preset", "params": {"preset": "pastel"}}])
+    report("马卡龙预设生效（≤6 色）", len(r.color_stats) <= 6, str(len(r.color_stats)))
+    r.chart.close()
+
+    # 深色底：背景深色占比显著
+    r = proc.process_image(grad_path, 40, 40, cell_size=40, save=False,
+                           effects=[{"id": "dark_chart", "params": {}}])
+    data = list(r.chart.get_flattened_data())
+    dark_cnt = sum(1 for p in data if sum(p) < 300)
+    report("深色底图纸背景深色", dark_cnt / len(data) > 0.3,
+           f"dark={dark_cnt / len(data):.2f}")
+    r.chart.close()
+
+    # 亮度调整：调整后映射结果变化
+    r1 = proc.process_image(grad_path, 30, 30, cell_size=40, save=False)
+    r2 = proc.process_image(grad_path, 30, 30, cell_size=40, save=False,
+                            effects=[{"id": "adjust", "params": {"brightness": 1.5}}])
+    report("亮度调整改变映射", r1.color_stats.keys() != r2.color_stats.keys()
+           or r1.total_beads != r2.total_beads)
+    r1.chart.close()
+    r2.chart.close()
+
+    # 组合特效不崩
+    r = proc.process_image(grad_path, 40, 40, cell_size=40, save=False,
+                           effects=[{"id": "grayscale", "params": {}},
+                                    {"id": "outline_cell", "params": {}},
+                                    {"id": "max_colors", "params": {"max": 8}},
+                                    {"id": "dark_chart", "params": {}}])
+    report("组合特效叠加正常", r is not None)
+    r.chart.close()
+
+    # 无效特效 id 忽略不崩
+    r = proc.process_image(grad_path, 40, 40, cell_size=40, save=False,
+                           effects=[{"id": "not_exist", "params": {}}])
+    report("无效特效 id 忽略", r is not None)
+    r.chart.close()
+
+
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
     test_colors()
@@ -484,6 +582,7 @@ def main():
     test_memory()
     test_golden_and_perf()
     test_core_server()
+    test_effects()
     print("\n=== 结果汇总 ===")
     print(f"通过: {RESULT['passed']}   失败: {RESULT['failed']}")
     if RESULT["errors"]:

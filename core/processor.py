@@ -104,8 +104,9 @@ class ImageProcessor:
             orig_w, orig_h = img.size
 
             # 0. 特效：几何变形 + 预处理（作用于原图）
+            ctx = None
             if effects:
-                from core.effects import EffectContext, apply_phase
+                from core.effects import EffectContext, apply_phase, has_effect
                 ctx = EffectContext(palette=None, grid_w=0, grid_h=0,
                                     cell_size=0, engine=self)
                 img = apply_phase(effects, "geometric", img, ctx)
@@ -140,7 +141,19 @@ class ImageProcessor:
 
             try:
                 import numpy as np  # noqa: F401
-                index_map = palette.closest_indices(small_img)
+                if effects and has_effect(effects, "dither"):
+                    dither_params = {}
+                    for _e in effects:
+                        if _e.get("id") == "dither":
+                            dither_params = _e.get("params") or {}
+                    strength = dither_params.get("strength", 1.0)
+                    try:
+                        strength = float(strength)
+                    except (TypeError, ValueError):
+                        strength = 1.0
+                    index_map = palette.closest_indices_dithered(small_img, strength)
+                else:
+                    index_map = palette.closest_indices(small_img)
             except ImportError:
                 index_map = None
 
@@ -177,9 +190,15 @@ class ImageProcessor:
 
             # 3.5 特效：网格阶段（作用于映射后的 grid 索引矩阵）
             if effects:
-                from core.effects import EffectContext, apply_phase
-                ctx = EffectContext(palette=palette, grid_w=final_grid_w,
-                                    grid_h=final_grid_h, cell_size=0, engine=self)
+                from core.effects import apply_phase
+                if ctx is None:
+                    from core.effects import EffectContext
+                    ctx = EffectContext(palette=palette, grid_w=final_grid_w,
+                                        grid_h=final_grid_h, cell_size=0, engine=self)
+                else:
+                    ctx.palette = palette
+                    ctx.grid_w = final_grid_w
+                    ctx.grid_h = final_grid_h
                 import numpy as np
                 idx_mat = np.asarray(grid_idx, dtype=np.int32)
                 idx_mat = apply_phase(effects, "grid", idx_mat, ctx)
@@ -190,6 +209,20 @@ class ImageProcessor:
                             grid_colors[y][x] = palette.colors[ci]
                             grid_codes[y][x] = palette.codes[ci].strip()
                             grid_idx[y][x] = ci
+                # grid 特效可能改色 → 重建颜色统计
+                color_stats = {}
+                for y in range(final_grid_h):
+                    for x in range(final_grid_w):
+                        code = grid_codes[y][x]
+                        rgb = grid_colors[y][x]
+                        ci = grid_idx[y][x]
+                        if code not in color_stats:
+                            color_stats[code] = {
+                                "rgb": rgb,
+                                "name": palette.names[ci].strip(),
+                                "code": code, "count": 0, "index": ci,
+                            }
+                        color_stats[code]["count"] += 1
 
             # 4. 计算画布尺寸（每格像素与格子数解耦）
             if cell_size and cell_size > 0:
@@ -219,11 +252,10 @@ class ImageProcessor:
                 "background": GRID_WHITE,
                 "grid_color": grid_color,
                 "show_grid": show_grid,
+                "dark": False,
             }
             if effects:
-                from core.effects import EffectContext, apply_phase
-                ctx = EffectContext(palette=palette, grid_w=final_grid_w,
-                                    grid_h=final_grid_h, cell_size=cell_size, engine=self)
+                from core.effects import apply_phase
                 render_opts = apply_phase(effects, "chart", render_opts, ctx) or render_opts
             final_img = Image.new('RGB', (total_width, total_height), render_opts["background"])
             draw = ImageDraw.Draw(final_img)
@@ -236,7 +268,8 @@ class ImageProcessor:
             if show_row_col_labels:
                 self._draw_row_col_labels(draw, final_grid_w, final_grid_h,
                                           start_x, start_y, cell_size,
-                                          label_margin)
+                                          label_margin,
+                                          dark=render_opts.get("dark", False))
 
             # 9. 绘制网格和颜色（成品图为预览降采样版，纯色块缩放无损）
             finished_img = None
@@ -288,7 +321,10 @@ class ImageProcessor:
                         text_y = y1 + (cell_size - text_h) // 2
 
                         brightness = sum(color) / 3
-                        text_color = (255, 255, 255) if brightness < 128 else (0, 0, 0)
+                        if render_opts.get("dark"):
+                            text_color = (0, 0, 0) if brightness > 200 else (255, 255, 255)
+                        else:
+                            text_color = (255, 255, 255) if brightness < 128 else (0, 0, 0)
                         draw.text((text_x, text_y), code, fill=text_color, font=font)
 
             # 10. 绘制颜色图例 + 页脚
@@ -296,7 +332,8 @@ class ImageProcessor:
                 self._draw_legend_footer(draw, final_grid_w, final_grid_h,
                                          cell_size, total_width, total_height,
                                          color_stats, total_beads,
-                                         label_margin, legend_rows)
+                                         label_margin, legend_rows,
+                                         dark=render_opts.get("dark", False))
 
             # 11. 保存
             save_path = ""
@@ -318,9 +355,17 @@ class ImageProcessor:
 
     def _draw_legend_footer(self, draw, grid_w, grid_h, cell_size,
                             total_width, total_height, color_stats, total_beads,
-                            label_margin, legend_rows):
+                            label_margin, legend_rows, dark=False):
         legend_y = label_margin * 2 + grid_h * cell_size + LEGEND_TOP_GAP
         color_items = sorted(color_stats.items(), key=lambda x: x[1]['count'], reverse=True)
+
+        text_main = (235, 235, 235) if dark else (0, 0, 0)
+        text_sub = (170, 170, 170) if dark else (100, 100, 100)
+        text_name = (200, 200, 200) if dark else (50, 50, 50)
+        line_color = (70, 70, 70) if dark else (220, 220, 220)
+        title_color = (120, 190, 255) if dark else (0, 120, 215)
+        info_color = (160, 160, 160) if dark else (120, 120, 120)
+        block_outline = (120, 120, 120) if dark else (200, 200, 200)
 
         usable_width = total_width - 40
         colors_per_row = min(10, len(color_items))
@@ -338,21 +383,21 @@ class ImageProcessor:
 
             draw.rounded_rectangle(
                 [block_x, item_y, block_x + block_size, item_y + block_size],
-                radius=5, fill=info['rgb'], outline=(200, 200, 200), width=1
+                radius=5, fill=info['rgb'], outline=block_outline, width=1
             )
 
             font_small = self._get_font(11)
             font_normal = self._get_font(13)
 
             text_x = block_x + block_size + 8
-            draw.text((text_x, item_y + 5), f"{code}", fill=(0, 0, 0), font=font_small)
-            draw.text((text_x, item_y + 22), f"{info['count']}颗", fill=(100, 100, 100), font=font_small)
-            draw.text((text_x, item_y + 40), f"{info['name']}", fill=(50, 50, 50), font=font_normal)
+            draw.text((text_x, item_y + 5), f"{code}", fill=text_main, font=font_small)
+            draw.text((text_x, item_y + 22), f"{info['count']}颗", fill=text_sub, font=font_small)
+            draw.text((text_x, item_y + 40), f"{info['name']}", fill=text_name, font=font_normal)
 
         # 底部耗材量页脚
         footer_y = legend_y + legend_rows * LEGEND_ROW_GAP + LEGEND_BOTTOM_GAP
 
-        draw.line([(100, footer_y), (total_width - 100, footer_y)], fill=(220, 220, 220), width=2)
+        draw.line([(100, footer_y), (total_width - 100, footer_y)], fill=line_color, width=2)
 
         font_title = self._get_font(24, bold=True)
         font_count = self._get_font(36, bold=True)
@@ -370,16 +415,16 @@ class ImageProcessor:
         start_text_x = (total_width - total_text_w) // 2
 
         title_x = (total_width - title_w) // 2
-        draw.text((title_x, footer_y + 10), title_text, fill=(0, 120, 215), font=font_title)
+        draw.text((title_x, footer_y + 10), title_text, fill=title_color, font=font_title)
 
-        draw.text((start_text_x, footer_y + 50), count_text, fill=(0, 0, 0), font=font_count)
-        draw.text((start_text_x + count_w + 8, footer_y + 60), unit_text, fill=(100, 100, 100), font=font_unit)
+        draw.text((start_text_x, footer_y + 50), count_text, fill=text_main, font=font_count)
+        draw.text((start_text_x + count_w + 8, footer_y + 60), unit_text, fill=text_sub, font=font_unit)
 
         info_text = f"网格尺寸：{grid_w} × {grid_h} 颗  |  画布：{total_width} × {total_height} px"
         info_font = self._get_font(14)
         info_w = draw.textlength(info_text, font=info_font)
         info_x = (total_width - info_w) // 2
-        draw.text((info_x, footer_y + 100), info_text, fill=(120, 120, 120), font=info_font)
+        draw.text((info_x, footer_y + 100), info_text, fill=info_color, font=info_font)
 
     def export_pdf(self, pil_img, save_path, mode="a4", cell_size_px=None):
         """导出 PDF：a4=适应A4单页, 1x1=1:1实物大小(BEAD_MM/颗)多页拼接"""
@@ -458,13 +503,23 @@ class ImageProcessor:
         return save_path
 
     def _draw_row_col_labels(self, draw, grid_w, grid_h, start_x, start_y, cell_size,
-                             label_margin):
+                             label_margin, dark=False):
         """绘制行列标号（四边统一逻辑）"""
         font_label = self._get_font(14, bold=True)
         font_small = self._get_font(11)
 
-        label_bg = (240, 248, 255)
-        label_border = (200, 210, 220)
+        if dark:
+            label_bg = (50, 50, 52)
+            label_border = (75, 75, 78)
+            text_strong = (120, 190, 255)
+            text_normal = (185, 185, 185)
+            corner = (0, 90, 160)
+        else:
+            label_bg = (240, 248, 255)
+            label_border = (200, 210, 220)
+            text_strong = (0, 100, 200)
+            text_normal = (80, 80, 80)
+            corner = (0, 120, 215)
 
         for side in ("top", "bottom", "left", "right"):
             n = grid_w if side in ("top", "bottom") else grid_h
@@ -486,10 +541,10 @@ class ImageProcessor:
 
                 num = i + 1
                 if num % 5 == 0:
-                    text_color = (0, 100, 200)
+                    text_color = text_strong
                     font = font_label
                 else:
-                    text_color = (80, 80, 80)
+                    text_color = text_normal
                     font = font_small
 
                 bbox = draw.textbbox((0, 0), str(num), font=font)
@@ -502,4 +557,4 @@ class ImageProcessor:
                 draw.text((text_x, text_y), str(num), fill=text_color, font=font)
 
         # 左上角装饰
-        draw.rectangle([0, 0, label_margin, label_margin], fill=(0, 120, 215))
+        draw.rectangle([0, 0, label_margin, label_margin], fill=corner)
