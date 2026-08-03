@@ -35,11 +35,19 @@ struct ContentView: View {
     @State private var statusText = "就绪"
     @State private var showColorChart = false
 
+    // 编辑
+    @State private var editMode = false
+    @State private var editColorCode = "H7"
+    @State private var editHistory: [[String: Any]] = []
+    @State private var doneCells: Set<String> = []
+    @State private var trackKey: String?
+
     // 预览
     @State private var zoom: Double = 100
     @State private var fitToWindow = true
     @State private var showFinished = false
     @State private var offset = CGSize.zero
+    @State private var previewGeo = CGSize(width: 800, height: 600)
 
     var body: some View {
         HStack(spacing: 0) {
@@ -175,7 +183,8 @@ struct ContentView: View {
                 }
             }
             .clipped()
-            .gesture(dragGesture)
+            .gesture(dragGesture, including: editMode ? .none : .all)
+            .gesture(editGesture, including: editMode ? .all : .none)
             .onTapGesture(count: 2) { offset = .zero }
 
             HStack {
@@ -185,6 +194,18 @@ struct ContentView: View {
                 Text("\(Int(zoom))%").font(.caption).frame(width: 44)
                 Toggle("成品效果", isOn: $showFinished)
                 Spacer()
+                Toggle("编辑模式", isOn: $editMode)
+                if editMode {
+                    TextField("色号", text: $editColorCode)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
+                    Button("撤销") { undoEdit() }
+                        .disabled(editHistory.isEmpty)
+                    Toggle("进度标记", isOn: Binding(
+                        get: { !doneCells.isEmpty },
+                        set: { _ in }
+                    ))
+                }
             }
             .padding(.horizontal)
         }
@@ -201,6 +222,8 @@ struct ContentView: View {
                 .offset(offset)
                 .position(x: geo.size.width / 2 + offset.width,
                           y: geo.size.height / 2 + offset.height)
+                .onAppear { previewGeo = geo.size }
+                .onChange(of: geo.size) { _, newValue in previewGeo = newValue }
         }
     }
 
@@ -221,6 +244,79 @@ struct ContentView: View {
                 offset = value.translation
             }
             .onEnded { _ in }
+    }
+
+    // MARK: - 编辑模式
+    private var editGesture: some Gesture {
+        SpatialTapGesture()
+            .onEnded { value in
+                handleEditTap(location: value.location)
+            }
+    }
+
+    private func handleEditTap(location: CGPoint) {
+        guard let img = chartImage, let result = lastResult else { return }
+        // 预览区内图像实际位置：居中 + offset
+        let geo = previewSize(geo: previewGeo, img: img)
+        let imgX = (previewGeo.width - geo.width) / 2 + offset.width
+        let imgY = (previewGeo.height - geo.height) / 2 + offset.height
+        let px = Int((location.x - imgX) / geo.width * CGFloat(result.gridW))
+        let py = Int((location.y - imgY) / geo.height * CGFloat(result.gridH))
+        guard px >= 0, px < result.gridW, py >= 0, py < result.gridH else { return }
+
+        let code = editColorCode.trimmingCharacters(in: .whitespaces).uppercased()
+        guard !code.isEmpty else { return }
+        editHistory.append(["x": px, "y": py, "code": code])
+        applyEdits()
+    }
+
+    private func saveTrack(key: String) {
+        guard let eng = engine else { return }
+        eng.request(op: "track_save", params: ["key": key,
+                                               "cells": Array(doneCells)]) { _ in }
+    }
+
+    private func undoEdit() {
+        if !editHistory.isEmpty {
+            editHistory.removeLast()
+        }
+        applyEdits()
+    }
+
+    private func applyEdits() {
+        guard let eng = engine, let path = imagePath, let result = lastResult else { return }
+        isBusy = true
+        var params: [String: Any] = [
+            "image_path": path,
+            "grid_w": result.gridW,
+            "grid_h": result.gridH,
+            "cell_size": result.cellSize,
+            "palette": paletteName,
+            "effects": effectsParams(),
+            "overrides": editHistory,
+        ]
+        eng.request(op: "edit", params: params) { res in
+            defer { isBusy = false }
+            switch res {
+            case .success(let r):
+                guard let data = try? JSONSerialization.data(withJSONObject: r),
+                      let gen = try? JSONDecoder().decode(GenerateResult.self, from: data) else {
+                    statusText = "编辑解析失败"
+                    return
+                }
+                lastResult = gen
+                chartImage = NSImage(contentsOfFile: gen.chartPath)
+                let key = (gen.chartPath as NSString).lastPathComponent
+                trackKey = key
+                for edit in editHistory {
+                    doneCells.insert("\(edit["x"] ?? 0):\(edit["y"] ?? 0)")
+                }
+                saveTrack(key: key)
+                statusText = "已编辑：\(editHistory.count) 处修改 | 已完成 \(doneCells.count) 格"
+            case .failure(let e):
+                statusText = "编辑失败：\(e.localizedDescription)"
+            }
+        }
     }
 
     // MARK: - 初始化

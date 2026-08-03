@@ -81,7 +81,7 @@ class ImageProcessor:
     def process_image(self, image_path, grid_w, grid_h, canvas_size=1500,
                       cell_size=None, max_canvas=MAX_CANVAS,
                       fit_box=False, show_finished=False,
-                      effects=None,
+                      effects=None, grid_overrides=None,
                       show_grid=True, grid_color=GRID_DEFAULT, grid_width=1,
                       palette_name="mard_221", show_color_legend=True,
                       show_row_col_labels=True, save=True,
@@ -93,6 +93,7 @@ class ImageProcessor:
         fit_box: True 时按请求框等比完整放入（取小），False 时按较宽一侧为基准
         show_finished: True 时额外渲染一张纯色成品效果图（预览用，4096px 上限降采样）
         effects: [{"id": ..., "params": {...}}] 特效链（全部默认关闭）
+        grid_overrides: {(y, x): code} 手动编辑覆盖（映射后应用）
         cancel_callback: 每行检测的取消回调，返回 True 则中止
         返回: GenerateResult；失败/取消返回 None
         """
@@ -196,6 +197,33 @@ class ImageProcessor:
                     color_stats[closest_code]["count"] += 1
 
             total_beads = sum(info['count'] for info in color_stats.values())
+
+            # 3.4 手动编辑覆盖（grid_overrides: {(y,x): code}）
+            if grid_overrides:
+                code_to_idx = {c: i for i, c in enumerate(palette.codes)}
+                for (y, x), code in grid_overrides.items():
+                    if not (0 <= y < final_grid_h and 0 <= x < final_grid_w):
+                        continue
+                    ci = code_to_idx.get(str(code).strip())
+                    if ci is None:
+                        continue
+                    grid_colors[y][x] = palette.colors[ci]
+                    grid_codes[y][x] = palette.codes[ci].strip()
+                    grid_idx[y][x] = ci
+                color_stats = {}
+                for y in range(final_grid_h):
+                    for x in range(final_grid_w):
+                        code = grid_codes[y][x]
+                        if code is None:
+                            continue
+                        ci = grid_idx[y][x]
+                        if code not in color_stats:
+                            color_stats[code] = {
+                                "rgb": grid_colors[y][x],
+                                "name": palette.names[ci].strip(),
+                                "code": code, "count": 0, "index": ci,
+                            }
+                        color_stats[code]["count"] += 1
 
             # 3.5 特效：网格阶段（作用于映射后的 grid 索引矩阵）
             if effects:

@@ -50,6 +50,13 @@ class CoreServer:
             return {"ok": True, "cancelled": True}
         if op == "generate":
             return {"ok": True, **self._generate(rid, params)}
+        if op == "edit":
+            return {"ok": True, **self._edit(rid, params)}
+        if op == "track_load":
+            return {"ok": True, "track": self._track_load(params)}
+        if op == "track_save":
+            self._track_save(params)
+            return {"ok": True}
         if op == "export_png":
             return {"ok": True, **self._export_png(params)}
         if op == "export_bom":
@@ -190,6 +197,77 @@ class CoreServer:
             "cell_size": result.cell_size,
             "palette": params.get("palette", "mard_221"),
         }
+
+    def _edit(self, rid, params):
+        """手动编辑：重生成 + 应用格子覆盖，返回更新后的图纸"""
+        self._cancelled.discard(rid)
+        self._last_progress[rid] = 0
+        image_path = params["image_path"]
+        grid_w = params.get("grid_w", 50)
+        grid_h = params.get("grid_h", 50)
+        board = params.get("board")
+        if board:
+            from PIL import Image as _Img
+            with _Img.open(image_path) as im:
+                iw, ih = im.size
+            grid_w = int(board)
+            grid_h = max(1, round(int(board) * ih / iw))
+        overrides = {}
+        for item in params.get("overrides") or []:
+            x = int(item.get("x", -1))
+            y = int(item.get("y", -1))
+            code = item.get("code")
+            if x >= 0 and y >= 0 and code:
+                overrides[(y, x)] = code
+        result = self.processor.process_image(
+            image_path, grid_w=grid_w, grid_h=grid_h,
+            cell_size=params.get("cell_size"),
+            fit_box=params.get("fit_box", False),
+            show_finished=True,
+            effects=params.get("effects"),
+            grid_overrides=overrides,
+            show_grid=params.get("show_grid", True),
+            grid_color=tuple(params.get("grid_color", (200, 200, 200))),
+            palette_name=params.get("palette", "mard_221"),
+            show_color_legend=params.get("show_color_legend", True),
+            show_row_col_labels=params.get("show_row_col_labels", True),
+            save=False)
+        self._cancelled.discard(rid)
+        if result is None:
+            return {"error": "编辑失败"}
+        base = f"perler_edit_{int(time.time())}_{rid}.png"
+        chart_path = os.path.join(OUTPUT_DIR, base)
+        result.chart.save(chart_path)
+        return {
+            "chart_path": chart_path,
+            "chart_size": list(result.chart.size),
+            "color_stats": result.color_stats,
+            "total_beads": result.total_beads,
+            "grid_w": result.grid_w,
+            "grid_h": result.grid_h,
+            "cell_size": result.cell_size,
+        }
+
+    def _track_load(self, params):
+        key = params.get("key", "")
+        if not key:
+            return []
+        path = os.path.join(tempfile_dir(), f"perler_track_{key}.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else []
+        except (IOError, OSError, ValueError):
+            return []
+
+    def _track_save(self, params):
+        key = params.get("key", "")
+        cells = params.get("cells") or []
+        if not key:
+            return
+        path = os.path.join(tempfile_dir(), f"perler_track_{key}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cells, f, ensure_ascii=False)
 
     # ---------- 导出 ----------
     def _export_png(self, params):
