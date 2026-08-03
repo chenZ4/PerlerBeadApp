@@ -133,11 +133,18 @@ class ImageProcessor:
             # 2. 加载色卡
             palette = get_palette(palette_name)
 
-            # 3. 颜色映射 + 统计
+            # 3. 颜色映射 + 统计（支持 RGBA：透明像素为空格，无珠）
             grid_codes = [[None] * final_grid_w for _ in range(final_grid_h)]
             grid_colors = [[None] * final_grid_w for _ in range(final_grid_h)]
-            grid_idx = [[0] * final_grid_w for _ in range(final_grid_h)]
+            grid_idx = [[-1] * final_grid_w for _ in range(final_grid_h)]
             color_stats = {}
+
+            alpha_mask = None
+            map_img = small_img
+            if small_img.mode == "RGBA":
+                import numpy as _np
+                alpha_mask = (_np.asarray(small_img)[..., 3] >= 128)
+                map_img = small_img.convert("RGB")
 
             try:
                 import numpy as np  # noqa: F401
@@ -151,9 +158,9 @@ class ImageProcessor:
                         strength = float(strength)
                     except (TypeError, ValueError):
                         strength = 1.0
-                    index_map = palette.closest_indices_dithered(small_img, strength)
+                    index_map = palette.closest_indices_dithered(map_img, strength)
                 else:
-                    index_map = palette.closest_indices(small_img)
+                    index_map = palette.closest_indices(map_img)
             except ImportError:
                 index_map = None
 
@@ -166,13 +173,15 @@ class ImageProcessor:
                     if cancelled:
                         return None
                 for x in range(final_grid_w):
+                    if alpha_mask is not None and not alpha_mask[y, x]:
+                        continue
                     if index_map is not None:
                         closest_idx = int(index_map[y, x])
                         closest_rgb = palette.colors[closest_idx]
                         closest_name = palette.names[closest_idx].strip()
                         closest_code = palette.codes[closest_idx].strip()
                     else:
-                        r, g, b = small_img.getpixel((x, y))
+                        r, g, b = map_img.getpixel((x, y))
                         closest_rgb, closest_name, closest_code, closest_idx = \
                             palette.find_closest_color(r, g, b)
                     grid_colors[y][x] = closest_rgb
@@ -205,15 +214,19 @@ class ImageProcessor:
                 for y in range(final_grid_h):
                     for x in range(final_grid_w):
                         ci = int(idx_mat[y, x])
+                        if ci == -1:
+                            continue
                         if 0 <= ci < len(palette.colors):
                             grid_colors[y][x] = palette.colors[ci]
                             grid_codes[y][x] = palette.codes[ci].strip()
                             grid_idx[y][x] = ci
-                # grid 特效可能改色 → 重建颜色统计
+                # grid 特效可能改色 → 重建颜色统计（空格不计入）
                 color_stats = {}
                 for y in range(final_grid_h):
                     for x in range(final_grid_w):
                         code = grid_codes[y][x]
+                        if code is None:
+                            continue
                         rgb = grid_colors[y][x]
                         ci = grid_idx[y][x]
                         if code not in color_stats:
@@ -292,6 +305,9 @@ class ImageProcessor:
                     if cancelled:
                         return None
                 for x in range(final_grid_w):
+                    color = grid_colors[y][x]
+                    if color is None:
+                        continue
                     x1 = start_x + x * cell_size
                     y1 = start_y + y * cell_size
                     x2 = x1 + cell_size

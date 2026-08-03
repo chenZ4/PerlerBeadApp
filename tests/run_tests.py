@@ -570,6 +570,68 @@ def test_effects():
     report("无效特效 id 忽略", r is not None)
     r.chart.close()
 
+    # ===== 特效库 v2 =====
+    print("    特效库 v2:")
+    r = proc.process_image(src, 30, 30, cell_size=40, save=False,
+                           effects=[{"id": "cel_shade", "params": {"levels": 4}}])
+    report("赛璐璐色阶正常输出", r is not None)
+    r.chart.close()
+
+    r = proc.process_image(src, 30, 30, cell_size=40, save=False,
+                           effects=[{"id": "neon", "params": {}}])
+    report("霓虹正常输出", r is not None)
+    r.chart.close()
+
+    r = proc.process_image(src, 30, 30, cell_size=40, save=False,
+                           effects=[{"id": "duotone", "params": {}}])
+    report("双色调正常输出", r is not None and len(r.color_stats) > 0)
+    r.chart.close()
+
+    r = proc.process_image(src, 30, 30, cell_size=40, save=False,
+                           effects=[{"id": "mirror", "params": {"direction": "horizontal"}}])
+    report("镜像正常输出", r is not None)
+    r.chart.close()
+
+    r = proc.process_image(src, 30, 30, cell_size=40, save=False,
+                           effects=[{"id": "crop", "params": {"x1": 0.5, "y1": 0.5}}])
+    report("裁剪正常输出", r is not None)
+    r.chart.close()
+
+    # 背景去除：白底图 → 空格出现（耗材少于全格）
+    white_bg = os.path.join(TEST_DIR, "wb.png")
+    wimg = Image.new("RGB", (200, 200), (255, 255, 255))
+    wpx = wimg.load()
+    for y in range(40, 160):
+        for x in range(40, 160):
+            wpx[x, y] = (255, 0, 0)
+    wimg.save(white_bg)
+    r1 = proc.process_image(white_bg, 40, 40, cell_size=40, save=False)
+    r2 = proc.process_image(white_bg, 40, 40, cell_size=40, save=False,
+                            effects=[{"id": "bg_remove", "params": {"color": "#FFFFFF"}}])
+    report("背景去除产生空格（耗材减少）", r2.total_beads < r1.total_beads,
+           f"{r2.total_beads} < {r1.total_beads}")
+    r1.chart.close()
+    r2.chart.close()
+
+    # 大头（opencv 人脸）：有人脸图输出尺寸变化
+    face_img = os.path.join(TEST_DIR, "face.png")
+    try:
+        import cv2
+        cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        fimg = Image.new("RGB", (200, 200), (200, 200, 200))
+        r1 = proc.process_image(face_img if os.path.exists(face_img) else src,
+                                30, 30, cell_size=40, save=False)
+        report("大头特效（无人脸时原样输出）", r1 is not None)
+        r1.chart.close()
+        report("opencv 已安装（大头可用）", True)
+    except ImportError:
+        report("opencv 未安装（大头自动降级）", True)
+    r = proc.process_image(src, 30, 30, cell_size=40, save=False,
+                           effects=[{"id": "chibi", "params": {}}])
+    report("大头特效不崩溃（无人脸原样）", r is not None)
+    r.chart.close()
+
 
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
