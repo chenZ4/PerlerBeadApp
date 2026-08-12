@@ -39,8 +39,8 @@ def main():
     root = ROOT_CLASS()
     root.report_callback_exception = _on_tk_error
     try:
-        from ui.desktop_ui import DesktopUI
-        DesktopUI(root)
+        from ui.app_controller import AppController
+        AppController(root)
     except Exception as e:
         import traceback
         traceback.print_exc()

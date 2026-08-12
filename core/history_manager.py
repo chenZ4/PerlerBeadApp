@@ -9,12 +9,14 @@ LEGACY_HISTORY_FILE = "history.json"
 
 
 class HistoryManager:
-    def __init__(self):
+    def __init__(self, file_path=None):
+        self.file_path = file_path or HISTORY_FILE
         self.history = []
         self.load_history()
 
     def load_history(self):
-        if os.path.exists(LEGACY_HISTORY_FILE) and not os.path.exists(HISTORY_FILE):
+        history_file = self.file_path
+        if os.path.exists(LEGACY_HISTORY_FILE) and not os.path.exists(history_file):
             try:
                 with open(LEGACY_HISTORY_FILE, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)
@@ -24,9 +26,9 @@ class HistoryManager:
             self.save_history()
             return
 
-        if os.path.exists(HISTORY_FILE):
+        if os.path.exists(history_file):
             try:
-                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                with open(history_file, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)
             except (IOError, OSError, ValueError):
                 self.history = []
@@ -86,7 +88,7 @@ class HistoryManager:
 
     def save_history(self):
         try:
-            with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            with open(self.file_path, 'w', encoding='utf-8') as f:
                 json.dump(self.history, f, ensure_ascii=False, indent=2)
         except (IOError, OSError):
             pass

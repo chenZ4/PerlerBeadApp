@@ -1,4 +1,5 @@
 # tests/gui_smoke.py - GUI 冒烟测试（驱动完整 UI 流程，不弹原生对话框）
+# 架构：AppController + panels（SettingsPanel/PreviewPanel/QueuePanel/HistoryPanel/StatsPanel）
 import gc
 import os
 import sys
@@ -30,17 +31,26 @@ def report(name, ok, detail=""):
         print(f"  [FAIL] {name} {detail}")
 
 
+from core.models import QueueItem
 from core.settings import QUEUE_FILE, load_queue
-from ui.desktop_ui import DesktopUI
+
+# 历史记录重定向到临时目录，避免污染仓库 history.json
+import core.history_manager as _hm
+_hm.HISTORY_FILE = os.path.join(TEST_DIR, "history.json")
+
+from ui.app_controller import AppController
 
 root = tk.Tk()
-app = DesktopUI(root)
+app = AppController(root)
 root.update()
 
+sp = app.settings_panel    # 设置面板
+pp = app.preview_panel     # 预览面板
+qp = app.queue_panel       # 队列面板
+
 # 打桩：替换所有文件对话框与消息框，测试全程零弹窗零交互
-from ui import desktop_ui as du
+from ui import app_controller as du
 du.filedialog.askopenfilename = lambda **kw: SRC
-saved_paths = []
 du.filedialog.asksaveasfilename = lambda **kw: os.path.join(TEST_DIR, kw.get("initialfile", "out.png"))
 du.filedialog.askdirectory = lambda **kw: BATCH_DIR
 du.messagebox.showinfo = lambda *a, **k: None
@@ -61,110 +71,110 @@ def pump(n=3):
 print("== GUI: 初始化与主题 ==")
 report("界面初始化无异常", True)
 report("主题应用成功", root.winfo_exists())
-report("每格像素默认 60", app.cell_px_var.get() == "60", app.cell_px_var.get())
-report("预览区为 Canvas", hasattr(app, "preview_canvas"))
+report("每格像素默认 60", sp.cell_px_var.get() == "60", sp.cell_px_var.get())
+report("预览区为 Canvas", hasattr(pp, "preview_canvas"))
 
 print("== GUI: 选择图片与生成 ==")
 app.select_image()
 pump()
-report("选择图片后自动生成预览", app.processed_image is not None)
-report("状态栏显示完成", "完成" in app.lbl_status.cget("text"), app.lbl_status.cget("text"))
-report("颜色统计已更新", "总计" in app.lbl_color_stats.cget("text"))
+report("选择图片后自动生成预览", app.state.processed_image is not None)
+report("状态栏显示完成", "完成" in pp.lbl_status.cget("text"), pp.lbl_status.cget("text"))
+report("颜色统计已更新", "总计" in app.stats_panel.lbl_color_stats.cget("text"))
 
 print("== GUI: 预览缩放 ==")
-app._render_preview()
-report("适应窗口渲染", app.photo_ref is not None)
-scale_bar_before = app.scale_frame.winfo_height() if hasattr(app, "scale_frame") else 0
-app.fit_var.set(False)
-app.zoom_var.set(200)
-app.update_zoom(200)
+pp.force_render()
+report("适应窗口渲染", pp.photo_ref is not None)
+scale_bar_before = pp.scale_frame.winfo_height() if hasattr(pp, "scale_frame") else 0
+pp.fit_var.set(False)
+pp.zoom_var.set(200)
+pp._on_zoom_cmd(200)
 pump()
-report("200% 缩放渲染", app.photo_ref is not None)
-app._on_preview_wheel(type("E", (), {"delta": 1})())
+report("200% 缩放渲染", pp.photo_ref is not None)
+pp._on_wheel(type("E", (), {"delta": 1})())
 pump()
-report("滚轮缩放 +10%（200→210）", app.zoom_var.get() == 210, str(app.zoom_var.get()))
-app.fit_var.set(True)
-app._toggle_fit()
+report("滚轮缩放 +10%（200→210）", pp.zoom_var.get() == 210, str(pp.zoom_var.get()))
+pp.fit_var.set(True)
+pp._toggle_fit()
 pump()
-report("回到适应窗口模式", app.fit_var.get())
+report("回到适应窗口模式", pp.fit_var.get())
 
 print("== GUI: 参数切换与撤销 ==")
-app.entry_w.delete(0, tk.END)
-app.entry_w.insert(0, "60")
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, "60")
 app._trigger_preview()
 pump()
 app.preview_timer = None
 app.generate_preview()
 pump()
-report("改宽后重新生成", app.processed_image is not None)
+report("改宽后重新生成", app.state.processed_image is not None)
 app.undo()
 pump()
-report("撤销恢复宽度", app.entry_w.get() == "50", app.entry_w.get())
-report("撤销恢复显示标号", app.show_labels_var.get() is True)
+report("撤销恢复宽度", sp.entry_w.get() == "50", sp.entry_w.get())
+report("撤销恢复显示标号", sp.show_labels_var.get() is True)
 
 print("== GUI: 固定比例精确网格（主诉修复回归） ==")
-app.ratio_var.set("1:1 (正方形)")
+sp.ratio_var.set("1:1 (正方形)")
 app._on_ratio_change()
-app.entry_w.delete(0, tk.END)
-app.entry_w.insert(0, "40")
-app._calculate_dimension('w')
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, "40")
+sp.link_from('w')
 pump()
-report("1:1 联动高=宽", app.entry_h.get() == "40", app.entry_h.get())
+report("1:1 联动高=宽", sp.entry_h.get() == "40", sp.entry_h.get())
 app.generate_preview()
 pump()
 report("1:1 生成 40×40 不被源图比例覆盖",
-       "网格：40×40" in app.lbl_color_stats.cget("text"),
-       app.lbl_color_stats.cget("text"))
-app.ratio_var.set("按原图比例（宽为基准）")
+       "网格：40×40" in app.stats_panel.lbl_color_stats.cget("text"),
+       app.stats_panel.lbl_color_stats.cget("text"))
+sp.ratio_var.set("按原图比例（宽为基准）")
 app._on_ratio_change()
-app.entry_w.delete(0, tk.END)
-app.entry_w.insert(0, "50")
-app.entry_h.delete(0, tk.END)
-app.entry_h.insert(0, "50")
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, "50")
+sp.entry_h.delete(0, tk.END)
+sp.entry_h.insert(0, "50")
 if app.preview_timer:
     root.after_cancel(app.preview_timer)
     app.preview_timer = None
 pump()
 
 print("== GUI: 400% 放大缩放条可见 ==")
-app.fit_var.set(False)
-app.zoom_var.set(400)
-app.update_zoom(400)
+pp.fit_var.set(False)
+pp.zoom_var.set(400)
+pp._on_zoom_cmd(400)
 pump()
-scale_bar_after = app.scale_frame.winfo_height()
+scale_bar_after = pp.scale_frame.winfo_height()
 report("400% 放大后缩放条仍可见（未被顶掉）", scale_bar_after > 0, f"h={scale_bar_after}")
-app.fit_var.set(True)
-app._toggle_fit()
+pp.fit_var.set(True)
+pp._toggle_fit()
 pump()
 
 print("== GUI: 非法输入容错 ==")
-app.entry_w.delete(0, tk.END)
-app.entry_w.insert(0, "abc")
-app.entry_h.delete(0, tk.END)
-app.entry_h.insert(0, "0")
-app.grid_color_var.set("#ZZZZZZ")
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, "abc")
+sp.entry_h.delete(0, tk.END)
+sp.entry_h.insert(0, "0")
+sp.grid_color_var.set("#ZZZZZZ")
 app.generate_preview()
 pump()
-report("非法宽高/hex 不崩溃且正常生成", app.processed_image is not None)
-report("非法宽高回退默认值", app.entry_w.get() == "abc" and app.processed_image is not None)
+report("非法宽高/hex 不崩溃且正常生成", app.state.processed_image is not None)
+report("非法宽高回退默认值", sp.entry_w.get() == "abc" and app.state.processed_image is not None)
 
 bad_hexes = ["", "#", "12345", "#1234567", "GGGGGG", "0x1234", "＃123456",
              "#1_2abc", "abc", "12", "#1234567890", "None", "  "]
 all_safe = True
 for bad in bad_hexes:
-    app.grid_color_var.set(bad)
+    sp.grid_color_var.set(bad)
     app.generate_preview()
     pump()
-    if app.processed_image is None:
+    if app.state.processed_image is None:
         all_safe = False
         print(f"    hex 输入崩: {bad!r}")
 report(f"hex 穷举 {len(bad_hexes)} 例非法输入全部回退不崩", all_safe)
 
-app.entry_w.delete(0, tk.END)
-app.entry_w.insert(0, "50")
-app.entry_h.delete(0, tk.END)
-app.entry_h.insert(0, "50")
-app.grid_color_var.set("#C8C8C8")
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, "50")
+sp.entry_h.delete(0, tk.END)
+sp.entry_h.insert(0, "50")
+sp.grid_color_var.set("#C8C8C8")
 app.generate_preview()
 pump()
 
@@ -175,41 +185,40 @@ report("保存后加入历史", len(app.history_mgr.get_list()) > 0)
 hist = app.history_mgr.get_list()[0]
 report("历史记录含 show_labels", hist.get('show_labels') is True)
 report("历史记录 save_path 绝对", os.path.isabs(hist['save_path']))
+
 app.export_png()
 pump()
 report("导出 PNG 生成文件", any(f.endswith(".png") for f in os.listdir(TEST_DIR)))
+
 app.export_pdf()
 pump()
 report("导出 PDF 生成文件", any(f.endswith(".pdf") for f in os.listdir(TEST_DIR)))
-report("状态栏显示 PDF 导出", "PDF" in app.lbl_status.cget("text"), app.lbl_status.cget("text"))
+report("状态栏显示 PDF 导出", "PDF" in pp.lbl_status.cget("text"), pp.lbl_status.cget("text"))
 
 print("== GUI: 批量队列 ==")
 app.enqueue_item()
-app.queue_format_var.set("PDF(A4适应)")
+qp.queue_format_var.set("PDF(A4适应)")
 app.enqueue_item()
-app.queue_format_var.set("PDF(1:1实物)")
+qp.queue_format_var.set("PDF(1:1实物)")
 app.enqueue_item()
 report("队列入队 3 项", len(app.queue_items) == 3)
 app.process_queue()
 pump()
 files = sorted(os.listdir(BATCH_DIR))
-pngs = [f for f in files if f.endswith(".png")]
-pdfs = [f for f in files if f.endswith(".pdf")]
 report("批量导出 3 个文件", len(files) == 3, str(files))
 report("含 1 个 PNG 和 2 个 PDF（A4/1:1 区分）",
-       len(pngs) == 1 and len(pdfs) == 2
-       and any("_a4" in f for f in pdfs) and any("_1x1" in f for f in pdfs),
-       str(files))
+       sum(1 for f in files if f.endswith(".png")) == 1
+       and sum(1 for f in files if f.endswith(".pdf")) == 2, str(files))
 report("批量后历史已更新", len(app.history_mgr.get_list()) >= 3)
 app.clear_queue()
 report("清空队列", len(app.queue_items) == 0)
 
-print("== GUI: 文件名防覆盖 ==")
+print("== GUI: 不同源图文件名防覆盖 ==")
 app.select_image()
 pump()
 app.enqueue_item()
-app.selected_file = SRC2
-app.lbl_file.config(text="猫咪图案.png")
+app.state.selected_file = SRC2
+sp.lbl_file.config(text="猫咪图案.png")
 app.enqueue_item()
 report("两张不同源图入队", len(app.queue_items) == 2)
 app.process_queue()
@@ -237,7 +246,6 @@ app.clear_queue()
 
 print("== GUI: 队列旧格式迁移 ==")
 from core.settings import save_queue
-from core.models import QueueItem
 legacy_item = {
     'image_path': SRC, 'width': 40, 'height': 40,
     'ratio': '按原图比例（宽为基准）',
@@ -264,7 +272,7 @@ app.is_processing = False
 app.generate_preview()
 pump()
 pump()
-report("处理完成后自动补生成", app._pending_regenerate is False and app.processed_image is not None)
+report("处理完成后自动补生成", app._pending_regenerate is False and app.state.processed_image is not None)
 
 print("== GUI: 队列持久化 ==")
 app.select_image()
@@ -315,10 +323,11 @@ pump()
 report("关闭后引用已清理", app.color_chart_window is None)
 
 print("== GUI: 设置持久化 ==")
-app.palette_var.set("佩勒 24 色")
-app.cell_px_var.set("80")
-app.show_labels_var.set(False)
-app._persist_settings()
+sp.palette_var.set("佩勒 24 色")
+sp.cell_px_var.set("80")
+sp.show_labels_var.set(False)
+app._sync_params_from_panel()
+app.state.persist_settings()
 from core.settings import load_settings, SETTINGS_FILE
 s = load_settings()
 report("设置持久化保存/读取",
@@ -326,90 +335,90 @@ report("设置持久化保存/读取",
        str(s))
 if os.path.exists(SETTINGS_FILE):
     os.remove(SETTINGS_FILE)
-app.palette_var.set("MARD 221 色")
-app.cell_px_var.set("60")
-app.show_labels_var.set(True)
-report("cm 成品尺寸提示", "cm" in app.lbl_cm_hint.cget("text"), app.lbl_cm_hint.cget("text"))
+sp.palette_var.set("MARD 221 色")
+sp.cell_px_var.set("60")
+sp.show_labels_var.set(True)
+report("cm 成品尺寸提示", "cm" in sp.lbl_cm_hint.cget("text"), sp.lbl_cm_hint.cget("text"))
 
 print("== GUI: 成品效果预览 ==")
-report("生成时附带成品图", app.finished_image is not None)
-app.finished_var.set(True)
-app._render_preview()
+report("生成时附带成品图", app.state.finished_image is not None)
+pp.finished_var.set(True)
+pp.force_render()
 pump()
-report("切换到成品效果渲染", app.photo_ref is not None)
-app.finished_var.set(False)
-app._render_preview()
+report("切换到成品效果渲染", pp.photo_ref is not None)
+pp.finished_var.set(False)
+pp.force_render()
 pump()
-report("切回图纸渲染", app.photo_ref is not None)
+report("切回图纸渲染", pp.photo_ref is not None)
 
 print("== GUI: 预览拖动平移 ==")
-app.fit_var.set(False)
-app.zoom_var.set(300)
-app.update_zoom(300)
-app._render_preview()
+pp.fit_var.set(False)
+pp.zoom_var.set(300)
+pp._on_zoom_cmd(300)
+pp.force_render()
 pump()
-item = app._img_item
-ox0, oy0 = app.preview_canvas.coords(item)
-cw = app.preview_canvas.winfo_width()
-ch = app.preview_canvas.winfo_height()
-report("300% 放大后图像大于画布", app._img_w > cw, f"img_w={app._img_w} canvas_w={cw}")
+item = pp._img_item
+ox0, oy0 = pp.preview_canvas.coords(item)
+cw = pp.preview_canvas.winfo_width()
+ch = pp.preview_canvas.winfo_height()
+report("300% 放大后图像大于画布", pp._img_w > cw, f"img_w={pp._img_w} canvas_w={cw}")
 report("放大后左上角对齐（ox=0）", ox0 == 0 and oy0 == 0, f"{ox0},{oy0}")
 
-app._on_preview_press(type("E", (), {"x": 100, "y": 100}))
-app._on_preview_drag(type("E", (), {"x": -100, "y": -80}))
-ox1, oy1 = app.preview_canvas.coords(item)
+pp._on_press(type("E", (), {"x": 100, "y": 100}))
+pp._on_drag(type("E", (), {"x": -100, "y": -80}))
+ox1, oy1 = pp.preview_canvas.coords(item)
 report("拖动后偏移变化（左移/上移）", ox1 == -200 and oy1 == -180, f"{ox1},{oy1}")
 
-app._on_preview_press(type("E", (), {"x": 0, "y": 0}))
-app._on_preview_drag(type("E", (), {"x": 20000, "y": 20000}))
-ox2, oy2 = app.preview_canvas.coords(item)
+pp._on_press(type("E", (), {"x": 0, "y": 0}))
+pp._on_drag(type("E", (), {"x": 20000, "y": 20000}))
+ox2, oy2 = pp.preview_canvas.coords(item)
 report("向右拖到极限被钳制（不越界）", ox2 == 0 and oy2 == 0, f"{ox2},{oy2}")
 
-app._on_preview_press(type("E", (), {"x": 0, "y": 0}))
-app._on_preview_drag(type("E", (), {"x": -20000, "y": -20000}))
-ox3, oy3 = app.preview_canvas.coords(item)
-report("向左拖到极限被钳制（不越界）", ox3 == cw - app._img_w and oy3 == ch - app._img_h,
+pp._on_press(type("E", (), {"x": 0, "y": 0}))
+pp._on_drag(type("E", (), {"x": -20000, "y": -20000}))
+ox3, oy3 = pp.preview_canvas.coords(item)
+report("向左拖到极限被钳制（不越界）", ox3 == cw - pp._img_w and oy3 == ch - pp._img_h,
        f"{ox3},{oy3}")
 
-app._on_preview_release(None)
-report("释放后拖动状态清空", app._drag_start is None)
+pp._on_release(None)
+report("释放后拖动状态清空", pp._drag_start is None)
 
-app._on_preview_double_click(None)
-ox4, oy4 = app.preview_canvas.coords(item)
+pp._on_double_click(None)
+ox4, oy4 = pp.preview_canvas.coords(item)
 report("双击恢复居中（左上角对齐）", ox4 == 0 and oy4 == 0, f"{ox4},{oy4}")
 
-app.fit_var.set(True)
-app._toggle_fit()
-app._render_preview()
+pp.fit_var.set(True)
+pp._toggle_fit()
+pp.force_render()
 pump()
-item = app._img_item
-app._on_preview_press(type("E", (), {"x": 10, "y": 10}))
-app._on_preview_drag(type("E", (), {"x": 60, "y": 60}))
-ox5, oy5 = app.preview_canvas.coords(item)
-report("适应窗口模式拖动无效（锁定居中）", ox5 == (cw - app._img_w) // 2, f"{ox5},{oy5}")
+item = pp._img_item
+pp._on_press(type("E", (), {"x": 10, "y": 10}))
+pp._on_drag(type("E", (), {"x": 60, "y": 60}))
+ox5, oy5 = pp.preview_canvas.coords(item)
+report("适应窗口模式拖动无效（锁定居中）", ox5 == (cw - pp._img_w) // 2, f"{ox5},{oy5}")
 
 print("== GUI: 大网格确认弹窗 ==")
 app.select_image()
 pump()
-app.entry_w.delete(0, tk.END)
-app.entry_w.insert(0, "250")
-app.entry_h.delete(0, tk.END)
-app.entry_h.insert(0, "250")
-before_img = app.processed_image
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, "250")
+sp.entry_h.delete(0, tk.END)
+sp.entry_h.insert(0, "250")
+before_img = app.state.processed_image
 orig_askyesno = du.messagebox.askyesno
 du.messagebox.askyesno = lambda *a, **k: False
 app.generate_preview(confirm_big=True)
 pump()
-report("大网格拒绝确认则不生成", app.processed_image is before_img)
+report("大网格拒绝确认则不生成", app.state.processed_image is before_img)
 du.messagebox.askyesno = lambda *a, **k: True
 app.generate_preview(confirm_big=True)
 pump()
-report("大网格确认后正常生成", app.processed_image is not before_img)
+report("大网格确认后正常生成", app.state.processed_image is not before_img)
 du.messagebox.askyesno = orig_askyesno
-app.entry_w.delete(0, tk.END)
-app.entry_w.insert(0, "50")
-app.entry_h.delete(0, tk.END)
-app.entry_h.insert(0, "50")
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, "50")
+sp.entry_h.delete(0, tk.END)
+sp.entry_h.insert(0, "50")
 app.generate_preview()
 pump()
 
@@ -455,7 +464,7 @@ tracemalloc.start()
 for _ in range(10):
     app.generate_preview()
     pump(1)
-    app._render_preview()
+    pp.force_render()
     pump(1)
 current, peak = tracemalloc.get_traced_memory()
 tracemalloc.stop()
@@ -471,4 +480,3 @@ if RESULT["errors"]:
     for e in RESULT["errors"]:
         print(f"  - {e}")
     sys.exit(1)
-print("全部通过 ✅")

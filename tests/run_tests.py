@@ -425,7 +425,7 @@ def test_services():
     tmp_dir = _tempfile.mkdtemp(prefix="perler_svc_")
     out_dir = _os.path.join(tmp_dir, "out")
     _os.makedirs(out_dir)
-    history = HistoryManager()
+    history = HistoryManager(file_path=_os.path.join(tmp_dir, "history.json"))
     batch = BatchService(proc, history)
     items = [
         QueueItem(image_path=src, params=GenerateParams(grid_w=20, grid_h=20), fmt="PNG"),
@@ -459,13 +459,11 @@ def test_services():
 
 def test_hex_to_rgb():
     print("== 测试1b: hex_to_rgb 输入防御 ==")
-    from ui.desktop_ui import DesktopUI
-
-    app = object.__new__(DesktopUI)
+    from core.models import hex_to_rgb, hex_to_rgb_safe
 
     def parse(value):
         try:
-            return app.hex_to_rgb(value)
+            return hex_to_rgb(value)
         except ValueError:
             return None
 
@@ -492,9 +490,7 @@ def test_hex_to_rgb():
             print(f"    非法输入未回退: {value} -> {parse(value)}")
     report("hex_to_rgb 合法 7 例 + 非法 13 例全部正确", ok)
 
-    app._read_params = lambda: (50, 50, 60, True, True, True, (200, 200, 200))
-    app._hex_to_rgb_safe("#ZZZZZZ")
-    report("_hex_to_rgb_safe 非法回退灰色", True)
+    report("hex_to_rgb_safe 非法回退灰色", hex_to_rgb_safe("#ZZZZZZ") == (200, 200, 200))
 
 
 def test_core_server():
