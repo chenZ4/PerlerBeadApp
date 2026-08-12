@@ -237,6 +237,7 @@ app.clear_queue()
 
 print("== GUI: 队列旧格式迁移 ==")
 from core.settings import save_queue
+from core.models import QueueItem
 legacy_item = {
     'image_path': SRC, 'width': 40, 'height': 40,
     'ratio': '按原图比例（宽为基准）',
@@ -244,7 +245,7 @@ legacy_item = {
     'grid_color': '#C8C8C8', 'palette': 'MARD 221 色', 'format': 'PNG',
 }
 save_queue([legacy_item])
-app.queue_items = [legacy_item]
+app.queue_items = [QueueItem.from_legacy(legacy_item)]
 app.refresh_queue_list()
 app.process_queue()
 pump()

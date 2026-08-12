@@ -287,6 +287,106 @@ def test_memory():
     report("结束后驻留内存回归（< 60MB）", current < 60 * mb, f"current={current / mb:.1f}MB")
 
 
+def test_models():
+    print("== 测试0: 领域模型（GenerateParams/QueueItem/SettingsStore） ==")
+    from core.models import (
+        DEFAULT_GRID_COLOR,
+        MAX_GRID_SIZE,
+        RATIO_CUSTOM,
+        RATIO_FIT_BOX,
+        RATIO_FIXED,
+        RATIO_ORIGINAL,
+        RATIOS,
+        GenerateParams,
+        QueueItem,
+        UndoSnapshot,
+        hex_to_rgb,
+        link_dimensions,
+        parse_cell_px,
+        parse_grid_h,
+        parse_grid_w,
+    )
+    from core.settings import SettingsStore
+
+    # 比例联动（双向）
+    report("link 1:1 宽编辑联动高", link_dimensions('w', 40, 29, "1:1 (正方形)") == (40, 40))
+    report("link 1:1 高编辑联动宽", link_dimensions('h', 29, 40, "1:1 (正方形)") == (40, 40))
+    report("link 4:3 宽编辑", link_dimensions('w', 40, 10, "4:3") == (40, 30))
+    report("link 4:3 高编辑", link_dimensions('h', 10, 30, "4:3") == (40, 30))
+    report("link 16:9 宽编辑", link_dimensions('w', 32, 5, "16:9") == (32, 18))
+    report("link 9:16 高编辑", link_dimensions('h', 5, 16, "9:16") == (9, 16))
+    report("link 非固定比例不动", link_dimensions('w', 40, 29, RATIO_ORIGINAL) == (40, 29))
+    report("link 自定义不动", link_dimensions('h', 40, 29, RATIO_CUSTOM) == (40, 29))
+
+    # 输入钳制
+    report("parse_grid_w 合法", parse_grid_w("40") == 40)
+    report("parse_grid_w 非法回退默认", parse_grid_w("abc") == 50)
+    report("parse_grid_w 上限钳制", parse_grid_w("99999") == MAX_GRID_SIZE)
+    report("parse_grid_h 下限钳制", parse_grid_h("-5") == 1)
+    report("parse_cell_px 范围钳制", parse_cell_px("999") == 160 and parse_cell_px("1") == 16)
+
+    # GenerateParams
+    p = GenerateParams(grid_w=40, grid_h=40, ratio="1:1 (正方形)")
+    report("GenerateParams exact_grid 判定", p.exact_grid and not p.fit_box)
+    report("GenerateParams fit_box 判定",
+           GenerateParams(ratio=RATIO_FIT_BOX).fit_box)
+    report("GenerateParams 原始比例两者皆否",
+           not GenerateParams(ratio=RATIO_ORIGINAL).exact_grid
+           and not GenerateParams(ratio=RATIO_ORIGINAL).fit_box)
+    p2 = p.linked('w')
+    report("GenerateParams linked 副本不变原对象", p2 is not p and p2.grid_h == 40)
+    report("GenerateParams clamp 生效", GenerateParams(grid_w=0, grid_h=9999, cell_px=1).clamp().grid_w == 1)
+    legacy = GenerateParams.from_dict({"width": 30, "height": 20, "canvas_size": 48,
+                                       "ratio": RATIO_ORIGINAL})
+    report("GenerateParams from_dict 兼容 canvas_size", legacy.cell_px == 48
+           and legacy.grid_w == 30 and legacy.grid_h == 20)
+
+    # QueueItem
+    qi = QueueItem(image_path="/tmp/a.png", params=GenerateParams(grid_w=9, grid_h=9),
+                   fmt="PDF(1:1实物)")
+    d = qi.to_dict()
+    report("QueueItem to_dict 字段", d["image_path"] == "/tmp/a.png"
+           and d["width"] == 9 and d["height"] == 9 and d["format"] == "PDF(1:1实物)")
+    qi2 = QueueItem.from_legacy(d)
+    report("QueueItem 序列化往返", qi2.image_path == qi.image_path
+           and qi2.params.grid_w == 9 and qi2.params.grid_h == 9
+           and qi2.export_mode == "1x1" and qi2.ext == "pdf")
+    report("QueueItem PNG 模式", QueueItem(image_path="x", fmt="PNG").export_mode is None)
+
+    # UndoSnapshot / 常量
+    snap = UndoSnapshot(params=p)
+    report("UndoSnapshot 持有参数", snap.params.grid_w == 40)
+    report("RATIOS 包含固定比例", set(RATIO_FIXED).issubset(RATIOS))
+
+    # SettingsStore（临时文件隔离）
+    tmp_dir = tempfile.mkdtemp(prefix="perler_store_")
+    store = SettingsStore(settings_file=os.path.join(tmp_dir, "s.json"),
+                          queue_file=os.path.join(tmp_dir, "q.json"))
+    store.save_settings({"palette": "哈马 16 色"})
+    s = store.load_settings()
+    report("SettingsStore 设置保存/读取", s["palette"] == "哈马 16 色")
+    report("SettingsStore 缺省补全", s["cell_px"] == "60" and s["ratio"] == RATIO_ORIGINAL)
+    store.save_queue([QueueItem(image_path="/tmp/x.png",
+                                params=GenerateParams(grid_w=11, grid_h=11))])
+    q = store.load_queue()
+    report("SettingsStore 队列保存/读取", len(q) == 1 and q[0].params.grid_w == 11)
+    # 旧格式文件迁移
+    with open(store.queue_file, "w", encoding="utf-8") as f:
+        f.write('[{"image_path": "/tmp/old.png", "width": 5, "height": 6, '
+                '"canvas_size": 40, "format": "PNG"}]')
+    q2 = store.load_queue()
+    report("SettingsStore 旧格式迁移", q2[0].image_path == "/tmp/old.png"
+           and q2[0].params.cell_px == 40 and q2[0].params.show_grid is True)
+
+    # 颜色换算
+    report("hex_to_rgb 大小写/带#/空格", hex_to_rgb(" #C8c8c8 ") == (200, 200, 200))
+    try:
+        hex_to_rgb("GGGGGG")
+        report("hex_to_rgb 非法抛错", False)
+    except ValueError:
+        report("hex_to_rgb 非法抛错", True)
+
+
 def test_hex_to_rgb():
     print("== 测试1b: hex_to_rgb 输入防御 ==")
     from ui.desktop_ui import DesktopUI
@@ -762,6 +862,7 @@ def test_stage3():
 
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
+    test_models()
     test_colors()
     test_hex_to_rgb()
     test_processor()

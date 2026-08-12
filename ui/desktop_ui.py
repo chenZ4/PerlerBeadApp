@@ -10,22 +10,28 @@ from PIL import Image, ImageTk
 
 from core.colors import PALETTE_OPTIONS, get_palette
 from core.history_manager import HistoryManager
+from core.models import (
+    BIG_GRID_WARN,
+    DEFAULT_GRID_COLOR,
+    DEFAULT_GRID_RGB,
+    RATIO_ORIGINAL,
+    RATIOS,
+    GenerateParams,
+    QueueItem,
+    hex_to_rgb,
+    hex_to_rgb_safe,
+    link_dimensions,
+    parse_cell_px,
+    parse_grid_h,
+    parse_grid_w,
+)
 from core.processor import ImageProcessor, OUTPUT_DIR
-from core.settings import load_queue, load_settings, save_queue, save_settings
+from core.settings import SettingsStore
 from core.version import APP_NAME, APP_VERSION
 from ui.fonts import is_mac, ui_font
 from ui.theme import ACCENT, apply_theme
 
-DEFAULT_GRID_COLOR = "#C8C8C8"
-DEFAULT_GRID_RGB = (200, 200, 200)
 MAX_RENDER_DIM = 8192
-MAX_GRID_SIZE = 500
-BIG_GRID_WARN = 40000
-RATIO_ORIGINAL = "按原图比例（宽为基准）"
-RATIO_FIT_BOX = "等比完整（适应框内）"
-# 固定比例：网格尺寸必须精确，不允许引擎按源图比例重算
-RATIO_FIXED = ["1:1 (正方形)", "4:3", "3:4", "16:9", "9:16"]
-RATIOS = [RATIO_ORIGINAL, RATIO_FIT_BOX] + RATIO_FIXED + ["自定义"]
 
 PALETTE_MAP = {display: internal for display, internal in PALETTE_OPTIONS}
 
@@ -35,7 +41,8 @@ class DesktopUI:
         self.root = root
         self.root.title("拼豆图纸")
         apply_theme(root)
-        self.settings = load_settings()
+        self.store = SettingsStore()
+        self.settings = self.store.load_settings()
 
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
@@ -77,7 +84,7 @@ class DesktopUI:
         self.color_chart_window = None
 
         # 批量队列
-        self.queue_items = load_queue()
+        self.queue_items = self.store.load_queue()
         self._queue_cancel = False
         self._queue_thumbs = []
         self._thumb_cache = {}
@@ -393,14 +400,14 @@ class DesktopUI:
                 'show_legend': self.show_legend_var.get(),
                 'grid_color': self.grid_color_var.get(),
             })
-            save_settings(self.settings)
+            self.store.save_settings(self.settings)
         except Exception:
             pass
 
     def _update_cm_hint(self):
         try:
-            w = int(self.entry_w.get())
-            h = int(self.entry_h.get())
+            w = int(self.entry_w.get().strip())
+            h = int(self.entry_h.get().strip())
             if w < 1 or h < 1:
                 raise ValueError
             self.lbl_cm_hint.config(
@@ -592,59 +599,15 @@ class DesktopUI:
             return
         self.is_calculating = True
         try:
-            w_str = self.entry_w.get().strip()
-            h_str = self.entry_h.get().strip()
-            w = int(w_str) if w_str else 50
-            h = int(h_str) if h_str else 50
-        except (TypeError, ValueError):
+            w = parse_grid_w(self.entry_w.get())
+            h = parse_grid_h(self.entry_h.get())
+            w, h = link_dimensions(source, w, h, self.ratio_var.get())
+            self.entry_w.delete(0, tk.END)
+            self.entry_w.insert(0, str(w))
+            self.entry_h.delete(0, tk.END)
+            self.entry_h.insert(0, str(h))
+        finally:
             self.is_calculating = False
-            return
-
-        ratio = self.ratio_var.get()
-        if ratio == "1:1 (正方形)":
-            if source == 'w':
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(w))
-            else:
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(h))
-        elif ratio == "4:3":
-            if source == 'w':
-                new_h = max(1, round(w * 3 / 4))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 4 / 3))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        elif ratio == "3:4":
-            if source == 'w':
-                new_h = max(1, round(w * 4 / 3))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 3 / 4))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        elif ratio == "16:9":
-            if source == 'w':
-                new_h = max(1, round(w * 9 / 16))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 16 / 9))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        elif ratio == "9:16":
-            if source == 'w':
-                new_h = max(1, round(w * 16 / 9))
-                self.entry_h.delete(0, tk.END)
-                self.entry_h.insert(0, str(new_h))
-            else:
-                new_w = max(1, round(h * 9 / 16))
-                self.entry_w.delete(0, tk.END)
-                self.entry_w.insert(0, str(new_w))
-        self.is_calculating = False
 
     def _update_palette_info(self):
         internal = self._display_to_internal(self.palette_var.get())
@@ -658,25 +621,28 @@ class DesktopUI:
         return self._display_to_internal(self.palette_var.get())
 
     def _read_params(self):
-        def _num(text, default, lo, hi):
-            try:
-                v = int(str(text).strip())
-            except (TypeError, ValueError):
-                v = default
-            return max(lo, min(hi, v))
-
-        w = _num(self.entry_w.get(), 50, 1, MAX_GRID_SIZE)
-        h = _num(self.entry_h.get(), 50, 1, MAX_GRID_SIZE)
-        cell_px = _num(self.cell_px_var.get(), 60, 16, 160)
+        w = parse_grid_w(self.entry_w.get())
+        h = parse_grid_h(self.entry_h.get())
+        cell_px = parse_cell_px(self.cell_px_var.get())
         show_grid = self.show_grid_var.get()
         show_labels = self.show_labels_var.get()
         show_legend = self.show_legend_var.get()
         try:
-            grid_color = self.hex_to_rgb(self.grid_color_var.get())
+            grid_color = hex_to_rgb(self.grid_color_var.get())
         except ValueError:
             self.lbl_status.config(text="⚠️ 网格颜色无效，已用灰色", style="Status.Warn.TLabel")
             grid_color = DEFAULT_GRID_RGB
         return w, h, cell_px, show_grid, show_labels, show_legend, grid_color
+
+    def current_params(self) -> GenerateParams:
+        """把界面参数收敛为领域模型快照"""
+        w, h, cell_px, show_grid, show_labels, show_legend, grid_color_hex = self._read_params()
+        return GenerateParams(
+            grid_w=w, grid_h=h, cell_px=cell_px,
+            ratio=self.ratio_var.get(), palette=self.palette_var.get(),
+            show_grid=show_grid, show_labels=show_labels,
+            show_legend=show_legend, grid_color=self.grid_color_var.get(),
+        )
 
     def _trigger_preview(self):
         if self.is_processing:
@@ -730,16 +696,16 @@ class DesktopUI:
             return
         self._load_image_file(file_path)
 
-    def _generate_chart(self, show_finished=True, cancel_callback=None):
-        """按当前参数生成图纸，返回 GenerateResult 或 None"""
-        w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
+    def _generate_chart(self, params=None, show_finished=True, cancel_callback=None):
+        """按参数生成图纸，返回 GenerateResult 或 None"""
+        params = params or self.current_params()
         return self.processor.process_image(
-            self.selected_file, w, h, cell_size=cell_px,
-            show_grid=show_grid, grid_color=grid_color,
-            palette_name=self._current_palette(), show_color_legend=show_legend,
-            show_row_col_labels=show_labels, show_finished=show_finished,
-            fit_box=(self.ratio_var.get() == RATIO_FIT_BOX),
-            exact_grid=(self.ratio_var.get() in RATIO_FIXED),
+            self.selected_file, params.grid_w, params.grid_h, cell_size=params.cell_px,
+            show_grid=params.show_grid, grid_color=params.grid_rgb,
+            palette_name=self._display_to_internal(params.palette),
+            show_color_legend=params.show_legend,
+            show_row_col_labels=params.show_labels, show_finished=show_finished,
+            fit_box=params.fit_box, exact_grid=params.exact_grid,
             save=False, cancel_callback=cancel_callback)
 
     def _apply_result(self, result):
@@ -1145,41 +1111,21 @@ class DesktopUI:
         self.lbl_color_stats.config(text=text, foreground="black")
 
     def hex_to_rgb(self, hex_color):
-        text = str(hex_color).strip().lstrip('#')
-        if len(text) != 6:
-            raise ValueError(f"无效颜色值：{hex_color}")
-        try:
-            r = int(text[0:2], 16)
-            g = int(text[2:4], 16)
-            b = int(text[4:6], 16)
-        except ValueError:
-            raise ValueError(f"无效颜色值：{hex_color}")
-        return (r, g, b)
+        return hex_to_rgb(hex_color)
 
     def _hex_to_rgb_safe(self, hex_color):
-        try:
-            return self.hex_to_rgb(hex_color)
-        except ValueError:
-            return DEFAULT_GRID_RGB
+        return hex_to_rgb_safe(hex_color)
 
     # ---------- 批量队列 ----------
     def enqueue_item(self):
         if not self.selected_file:
             messagebox.showwarning("提示", "请先选择图片！")
             return
-        w, h, cell_px, show_grid, show_labels, show_legend, grid_color = self._read_params()
-        item = {
-            'image_path': self.selected_file,
-            'width': w, 'height': h,
-            'ratio': self.ratio_var.get(),
-            'cell_px': cell_px,
-            'show_grid': show_grid, 'show_labels': show_labels, 'show_legend': show_legend,
-            'grid_color': self.grid_color_var.get(),
-            'palette': self.palette_var.get(),
-            'format': self.queue_format_var.get(),
-        }
+        item = QueueItem(image_path=self.selected_file,
+                         params=self.current_params(),
+                         fmt=self.queue_format_var.get())
         self.queue_items.append(item)
-        save_queue(self.queue_items)
+        self.store.save_queue(self.queue_items)
         self.refresh_queue_list()
         self.lbl_queue_status.config(text=f"队列共 {len(self.queue_items)} 项", foreground="black")
 
@@ -1200,10 +1146,12 @@ class DesktopUI:
         self.queue_tree.delete(*self.queue_tree.get_children())
         self._queue_thumbs = []
         for item in self.queue_items:
-            thumb = self._make_thumb(item['image_path'])
+            if not isinstance(item, QueueItem):
+                item = QueueItem.from_legacy(item)
+            thumb = self._make_thumb(item.image_path)
             self._queue_thumbs.append(thumb)
-            info = f"[{item['format']}] {item['width']}x{item['height']}"
-            self.queue_tree.insert("", tk.END, text=os.path.basename(item['image_path']),
+            info = f"[{item.fmt}] {item.params.grid_w}x{item.params.grid_h}"
+            self.queue_tree.insert("", tk.END, text=os.path.basename(item.image_path),
                                    values=(thumb, info))
 
     def remove_selected_queue(self):
@@ -1213,7 +1161,7 @@ class DesktopUI:
             return
         index = self.queue_tree.index(sel[0])
         self.queue_items.pop(index)
-        save_queue(self.queue_items)
+        self.store.save_queue(self.queue_items)
         self.refresh_queue_list()
         self.lbl_queue_status.config(text=f"队列共 {len(self.queue_items)} 项", foreground="black")
 
@@ -1221,7 +1169,7 @@ class DesktopUI:
         if not self.queue_items:
             return
         self.queue_items.clear()
-        save_queue(self.queue_items)
+        self.store.save_queue(self.queue_items)
         self.refresh_queue_list()
         self.progress.config(value=0)
         self.lbl_queue_status.config(text="队列为空", foreground="gray")
@@ -1266,42 +1214,31 @@ class DesktopUI:
                 if self._queue_cancel:
                     cancelled = total - idx
                     break
-                fmt = item['format']
-                if fmt == "PDF(A4适应)":
-                    mode = "a4"
-                    ext = "pdf"
-                    mode_tag = "_a4"
-                elif fmt == "PDF(1:1实物)":
-                    mode = "1x1"
-                    ext = "pdf"
-                    mode_tag = "_1x1"
-                else:
-                    mode = None
-                    ext = "png"
-                    mode_tag = ""
+                if not isinstance(item, QueueItem):
+                    item = QueueItem.from_legacy(item)
+                mode = item.export_mode
+                ext = item.ext
+                mode_tag = "" if mode is None else f"_{mode}"
 
-                palette_internal = self._display_to_internal(item['palette'])
-                grid_color = self._hex_to_rgb_safe(item['grid_color'])
-                try:
-                    cell_px = int(item.get('cell_px') or item.get('canvas_size') or 60)
-                    grid_w = int(item.get('width') or 50)
-                    grid_h = int(item.get('height') or 50)
-                except (TypeError, ValueError):
-                    cell_px, grid_w, grid_h = 60, 50, 50
-                src_name = os.path.splitext(os.path.basename(item['image_path']))[0]
+                palette_internal = self._display_to_internal(item.params.palette)
+                grid_color = hex_to_rgb_safe(item.params.grid_color)
+                cell_px = item.params.cell_px
+                grid_w = item.params.grid_w
+                grid_h = item.params.grid_h
+                src_name = os.path.splitext(os.path.basename(item.image_path))[0]
                 base = f"perler_{src_name}_{grid_w}x{grid_h}_{palette_internal}{mode_tag}"
                 out_path = self._unique_path(out_dir, base, ext)
                 img = None
                 try:
                     result = self.processor.process_image(
-                        item['image_path'], grid_w, grid_h,
+                        item.image_path, grid_w, grid_h,
                         cell_size=cell_px,
-                        show_grid=item.get('show_grid', True),
+                        show_grid=item.params.show_grid,
                         grid_color=grid_color, palette_name=palette_internal,
-                        show_color_legend=item.get('show_legend', True),
-                        show_row_col_labels=item.get('show_labels', True),
-                        fit_box=(item.get('ratio') == RATIO_FIT_BOX),
-                        exact_grid=(item.get('ratio') in RATIO_FIXED),
+                        show_color_legend=item.params.show_legend,
+                        show_row_col_labels=item.params.show_labels,
+                        fit_box=item.params.fit_box,
+                        exact_grid=item.params.exact_grid,
                         save=False, cancel_callback=lambda: self._queue_cancel)
                     if result is None:
                         if self._queue_cancel:
@@ -1317,16 +1254,16 @@ class DesktopUI:
                     else:
                         img.save(out_path)
                     success.append(out_path)
-                    self.history_mgr.add_record(item['image_path'], out_path,
+                    self.history_mgr.add_record(item.image_path, out_path,
                                                 grid_w, grid_h,
-                                                item.get('ratio', RATIO_ORIGINAL),
+                                                item.params.ratio,
                                                 cell_px,
-                                                item.get('show_grid', True),
-                                                item.get('grid_color', DEFAULT_GRID_COLOR),
-                                                item.get('palette', 'MARD 221 色'),
-                                                item.get('show_labels', True))
+                                                item.params.show_grid,
+                                                item.params.grid_color,
+                                                item.params.palette,
+                                                item.params.show_labels)
                 except Exception as e:
-                    failed.append((os.path.basename(item['image_path']), str(e)))
+                    failed.append((os.path.basename(item.image_path), str(e)))
                 finally:
                     if img is not None:
                         try:
