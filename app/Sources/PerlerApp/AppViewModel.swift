@@ -25,8 +25,16 @@ final class AppViewModel: ObservableObject {
 
     // MARK: 参数
     @Published var imagePath: String?
-    @Published var gridW = "29"
-    @Published var gridH = "29"
+    /// 最后编辑的维度（'w'/'h'）：固定比例下生成前按它联动另一侧
+    private var lastEditedDim = "w"
+    /// 程序写入联动值时抑制 didSet 记录（避免联动自身被当作用户编辑）
+    private var linking = false
+    @Published var gridW = "29" {
+        didSet { if !linking && gridW != oldValue { lastEditedDim = "w" } }
+    }
+    @Published var gridH = "29" {
+        didSet { if !linking && gridH != oldValue { lastEditedDim = "h" } }
+    }
     @Published var cellSize = "60"
     @Published var ratioMode = "原始比例"
     @Published var paletteDisplay = "MARD 221 色"
@@ -35,6 +43,20 @@ final class AppViewModel: ObservableObject {
     @Published var templates: [TemplateInfo] = []
 
     let ratioOptions = ["原始比例", "等比完整", "1:1", "4:3", "3:4", "16:9", "9:16"]
+
+    // 输入钳制（对齐 Tk 版规则）
+    private static let gridRange = 1...500
+    private static let cellRange = 16...160
+
+    private func clampedGrid(_ text: String, fallback: Int) -> Int {
+        let v = Int(text) ?? fallback
+        return min(max(v, Self.gridRange.lowerBound), Self.gridRange.upperBound)
+    }
+
+    private func clampedCell(_ text: String) -> Int {
+        let v = Int(text) ?? 60
+        return min(max(v, Self.cellRange.lowerBound), Self.cellRange.upperBound)
+    }
 
     /// R1: 比例模式 → 网格参数（exact_grid 强制精确，fit_box 等比完整）
     private func gridParams() -> (exact: Bool, fitBox: Bool) {
@@ -48,19 +70,51 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    /// 选择固定比例时联动高（对齐 Tk 版行为）
-    func applyRatioLink() {
-        guard let w = Int(gridW), w > 0 else { return }
-        let h: Int
+    /// 固定比例联动（纯函数：返回联动后的 (w, h)）
+    private func linkedDimensions(source: String, w: Int, h: Int) -> (Int, Int) {
         switch ratioMode {
-        case "1:1": h = w
-        case "4:3": h = w * 3 / 4
-        case "3:4": h = w * 4 / 3
-        case "16:9": h = w * 9 / 16
-        case "9:16": h = w * 16 / 9
-        default: return
+        case "1:1":
+            let side = source == "w" ? w : h
+            return (side, side)
+        case "4:3":
+            return source == "w" ? (w, max(1, Int((Double(w) * 3 / 4).rounded())))
+                                 : (max(1, Int((Double(h) * 4 / 3).rounded())), h)
+        case "3:4":
+            return source == "w" ? (w, max(1, Int((Double(w) * 4 / 3).rounded())))
+                                 : (max(1, Int((Double(h) * 3 / 4).rounded())), h)
+        case "16:9":
+            return source == "w" ? (w, max(1, Int((Double(w) * 9 / 16).rounded())))
+                                 : (max(1, Int((Double(h) * 16 / 9).rounded())), h)
+        case "9:16":
+            return source == "w" ? (w, max(1, Int((Double(w) * 16 / 9).rounded())))
+                                 : (max(1, Int((Double(h) * 9 / 16).rounded())), h)
+        default:
+            return (w, h)
         }
-        gridH = "\(max(1, h))"
+    }
+
+    /// 选择固定比例时联动（对齐 Tk 版双向联动行为）
+    func applyRatioLink(source: String = "w") {
+        let w = clampedGrid(gridW, fallback: 50)
+        let h = clampedGrid(gridH, fallback: 50)
+        let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
+        if nw == w && nh == h { return }
+        linking = true
+        gridW = "\(nw)"
+        gridH = "\(nh)"
+        linking = false
+    }
+
+    /// 输入框回车提交：规范化当前维度并联动另一侧
+    func commitDimension(_ source: String) {
+        lastEditedDim = source
+        let w = clampedGrid(gridW, fallback: 50)
+        let h = clampedGrid(gridH, fallback: 50)
+        let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
+        linking = true
+        gridW = "\(nw)"
+        gridH = "\(nh)"
+        linking = false
     }
 
     // MARK: 特效（全部默认关闭）
@@ -250,18 +304,29 @@ final class AppViewModel: ObservableObject {
         progress = 0
         statusText = "正在处理…"
         let gp = gridParams()
-        var params: [String: Any] = [
+        var w = clampedGrid(gridW, fallback: 29)
+        var h = clampedGrid(gridH, fallback: 29)
+        if gp.exact {
+            // 生成前按最后编辑的维度联动，保证固定比例下尺寸一致（对齐 Tk 行为）
+            let (nw, nh) = linkedDimensions(source: lastEditedDim, w: w, h: h)
+            w = nw
+            h = nh
+            linking = true
+            gridW = "\(w)"
+            gridH = "\(h)"
+            linking = false
+        }
+        let params: [String: Any] = [
             "image_path": path,
-            "grid_w": Int(gridW) ?? 29,
-            "grid_h": Int(gridH) ?? 29,
-            "cell_size": Int(cellSize) ?? 60,
+            "grid_w": w,
+            "grid_h": h,
+            "cell_size": clampedCell(cellSize),
             "palette": paletteInternal,
             "show_finished": true,
             "effects": effectsParams(),
             "fit_box": gp.fitBox,
             "exact_grid": gp.exact,
         ]
-        if selectedTemplate != nil { params["board"] = Int(gridW) ?? 29 }
         eng.request(op: "generate", params: params,
                     onProgress: { [weak self] p in
                         Task { @MainActor in self?.progress = p }

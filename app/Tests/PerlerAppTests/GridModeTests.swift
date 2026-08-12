@@ -94,7 +94,7 @@ final class GridModeTests: XCTestCase {
         XCTAssertEqual(r?.gridH, 40)
     }
 
-    // 比例联动：1:1 → 高=宽；4:3 → 高=宽*3/4
+    // 比例联动：1:1 → 高=宽；4:3 → 高=宽*3/4；双向（对齐 Tk 版）
     func testRatioLink() {
         vm.gridW = "60"
         vm.ratioMode = "1:1"
@@ -105,7 +105,57 @@ final class GridModeTests: XCTestCase {
         XCTAssertEqual(vm.gridH, "45")
         vm.ratioMode = "16:9"
         vm.applyRatioLink()
-        XCTAssertEqual(vm.gridH, "33")
+        XCTAssertEqual(vm.gridH, "34", "16:9 使用四舍五入（60*9/16=33.75→34）")
+    }
+
+    // 比例联动双向：编辑高 → 宽跟随（Tk 版行为）
+    func testRatioLinkFromHeight() {
+        vm.ratioMode = "4:3"
+        vm.gridW = "10"
+        vm.gridH = "30"
+        vm.applyRatioLink(source: "h")
+        XCTAssertEqual(vm.gridW, "40")
+        XCTAssertEqual(vm.gridH, "30")
+    }
+
+    // 生成前自动联动：1:1 下只改宽、高未联动 → 生成仍为正方形
+    func testGenerateRelinksFromWidth() {
+        let src = makeTestImage()
+        vm.setImagePath(src)
+        vm.ratioMode = "1:1"
+        vm.gridH = "29"
+        vm.gridW = "40"      // didSet 记录 lastEditedDim = 'w'
+        vm.generate()
+        _ = waitFor({ self.vm.lastResult != nil })
+        XCTAssertEqual(vm.lastResult?.gridW, 40)
+        XCTAssertEqual(vm.lastResult?.gridH, 40, "生成前应按最后编辑的宽联动高（40×40 而非 40×29）")
+    }
+
+    // 生成前自动联动：最后编辑的是高 → 以高为基准
+    func testGenerateRelinksFromHeight() {
+        let src = makeTestImage()
+        vm.setImagePath(src)
+        vm.ratioMode = "1:1"
+        vm.gridW = "29"
+        vm.gridH = "50"      // didSet 记录 lastEditedDim = 'h'
+        vm.generate()
+        _ = waitFor({ self.vm.lastResult != nil })
+        XCTAssertEqual(vm.lastResult?.gridW, 50, "最后编辑高时应以高为基准联动宽")
+        XCTAssertEqual(vm.lastResult?.gridH, 50)
+    }
+
+    // 输入钳制：非法/越界输入回退或钳制，不崩溃
+    func testGridInputClamping() {
+        let src = makeTestImage()
+        vm.setImagePath(src)
+        vm.ratioMode = "原始比例"
+        vm.gridW = "abc"
+        vm.gridH = "-3"
+        vm.cellSize = "9999"
+        vm.generate()
+        _ = waitFor({ self.vm.lastResult != nil })
+        XCTAssertNotNil(vm.lastResult, "非法输入应回退默认值而不崩溃")
+        XCTAssertEqual(vm.lastResult?.cellSize, 160, "每格像素应钳制到 160")
     }
 
     // 编辑在精确网格下保持网格尺寸

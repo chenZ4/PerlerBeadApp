@@ -47,9 +47,13 @@ struct ContentView: View {
                 }
 
                 glassSection("网格") {
-                    gridField("宽 (颗)", text: $vm.gridW)
-                    gridField("高 (颗)", text: $vm.gridH)
-                    gridField("每格像素", text: $vm.cellSize)
+                    GridFieldRow(label: "宽 (颗)", text: $vm.gridW) {
+                        vm.commitDimension("w")
+                    }
+                    GridFieldRow(label: "高 (颗)", text: $vm.gridH) {
+                        vm.commitDimension("h")
+                    }
+                    GridFieldRow(label: "每格像素", text: $vm.cellSize)
                     Picker("比例", selection: $vm.ratioMode) {
                         ForEach(vm.ratioOptions, id: \.self) { option in
                             Text(option).tag(option)
@@ -141,13 +145,6 @@ struct ContentView: View {
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func gridField(_ label: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(label).frame(width: 70, alignment: .leading)
-            TextField(label, text: text).textFieldStyle(.roundedBorder)
-        }
     }
 
     // MARK: - 预览面板
@@ -272,5 +269,23 @@ struct ContentView: View {
                                   : "perler_\(result.gridW)x\(result.gridH).pdf"
         guard let dest = savePanel(defaultName: name, types: ["pdf"]) else { return }
         vm.exportPDF(to: dest, mode: mode)
+    }
+}
+
+/// 网格输入行：独立 View 结构体（稳定身份，避免 macOS 上
+/// TextField 位于 ScrollView + 函数透传绑定导致的失焦/无法输入问题）
+struct GridFieldRow: View {
+    let label: String
+    @Binding var text: String
+    var onSubmit: (() -> Void)? = nil
+
+    var body: some View {
+        HStack {
+            Text(label).frame(width: 70, alignment: .leading)
+            TextField(label, text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: .infinity)
+                .onSubmit { onSubmit?() }
+        }
     }
 }
