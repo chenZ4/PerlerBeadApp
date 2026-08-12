@@ -8,7 +8,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from PIL import Image, ImageTk
 
-from core.colors import PALETTE_OPTIONS, get_palette
+from core.colors import PALETTE_OPTIONS, display_to_internal, get_palette
 from core.history_manager import HistoryManager
 from core.models import (
     BIG_GRID_WARN,
@@ -26,14 +26,13 @@ from core.models import (
     parse_grid_w,
 )
 from core.processor import ImageProcessor, OUTPUT_DIR
+from core.services import BatchService, ChartService
 from core.settings import SettingsStore
 from core.version import APP_NAME, APP_VERSION
 from ui.fonts import is_mac, ui_font
 from ui.theme import ACCENT, apply_theme
 
 MAX_RENDER_DIM = 8192
-
-PALETTE_MAP = {display: internal for display, internal in PALETTE_OPTIONS}
 
 
 class DesktopUI:
@@ -61,6 +60,8 @@ class DesktopUI:
 
         self.processor = ImageProcessor()
         self.history_mgr = HistoryManager()
+        self.chart_service = ChartService(self.processor)
+        self.batch_service = BatchService(self.processor, self.history_mgr)
 
         self.original_image = None
         self.processed_image = None
@@ -615,7 +616,7 @@ class DesktopUI:
         self.lbl_palette_info.config(text=f"✓ 共 {len(palette.colors)} 种颜色")
 
     def _display_to_internal(self, display_name):
-        return PALETTE_MAP.get(display_name, "mard_221")
+        return display_to_internal(display_name)
 
     def _current_palette(self):
         return self._display_to_internal(self.palette_var.get())
@@ -699,14 +700,9 @@ class DesktopUI:
     def _generate_chart(self, params=None, show_finished=True, cancel_callback=None):
         """按参数生成图纸，返回 GenerateResult 或 None"""
         params = params or self.current_params()
-        return self.processor.process_image(
-            self.selected_file, params.grid_w, params.grid_h, cell_size=params.cell_px,
-            show_grid=params.show_grid, grid_color=params.grid_rgb,
-            palette_name=self._display_to_internal(params.palette),
-            show_color_legend=params.show_legend,
-            show_row_col_labels=params.show_labels, show_finished=show_finished,
-            fit_box=params.fit_box, exact_grid=params.exact_grid,
-            save=False, cancel_callback=cancel_callback)
+        return self.chart_service.generate(
+            self.selected_file, params, show_finished=show_finished,
+            cancel_callback=cancel_callback)
 
     def _apply_result(self, result):
         """把生成结果应用到界面状态与预览"""
@@ -779,13 +775,14 @@ class DesktopUI:
             if result is None:
                 messagebox.showerror("错误", "生成失败")
                 return
-            result.chart.save(save_path)
+            self.chart_service.save_chart(result, save_path)
             self._apply_result(result)
-            w, h, cell_px, show_grid, _, _, grid_color = self._read_params()
-            self.history_mgr.add_record(self.selected_file, save_path, w, h,
-                                        self.ratio_var.get(), cell_px,
-                                        show_grid, grid_color, self.palette_var.get(),
-                                        self.show_labels_var.get())
+            params = self.current_params()
+            self.history_mgr.add_record(self.selected_file, save_path,
+                                        params.grid_w, params.grid_h,
+                                        params.ratio, params.cell_px,
+                                        params.show_grid, params.grid_color,
+                                        params.palette, params.show_labels)
             self.refresh_history_list()
 
             file_size = os.path.getsize(save_path) / 1024
@@ -828,7 +825,7 @@ class DesktopUI:
             if result is None:
                 messagebox.showerror("错误", "生成失败")
                 return
-            result.chart.save(save_path)
+            self.chart_service.save_chart(result, save_path)
             self._apply_result(result)
             file_size = os.path.getsize(save_path) / 1024
             self.lbl_status.config(text=f"🖼️ PNG 已导出：{os.path.basename(save_path)}",
@@ -874,7 +871,7 @@ class DesktopUI:
             if result is None:
                 messagebox.showerror("错误", "生成失败")
                 return
-            self.processor.export_pdf(result.chart, save_path, mode, result.cell_size)
+            self.chart_service.export_pdf(result.chart, save_path, mode, result.cell_size)
             self._apply_result(result)
             file_size = os.path.getsize(save_path) / 1024
             self.lbl_status.config(text=f"📄 PDF 已导出：{os.path.basename(save_path)}",
@@ -1177,14 +1174,6 @@ class DesktopUI:
     def _cancel_queue(self):
         self._queue_cancel = True
 
-    def _unique_path(self, directory, base, ext):
-        path = os.path.join(directory, f"{base}.{ext}")
-        i = 2
-        while os.path.exists(path):
-            path = os.path.join(directory, f"{base}_{i}.{ext}")
-            i += 1
-        return path
-
     def process_queue(self):
         if self.is_processing:
             return
@@ -1200,88 +1189,37 @@ class DesktopUI:
         self._queue_cancel = False
         self.btn_queue_start.config(state=tk.DISABLED)
         self.btn_queue_cancel.config(state=tk.NORMAL)
-        items = list(self.queue_items)
+        items = [i if isinstance(i, QueueItem) else QueueItem.from_legacy(i)
+                 for i in self.queue_items]
         total = len(items)
-        success = []
-        failed = []
-        cancelled = 0
         self.progress.config(maximum=total, value=0)
         self.lbl_queue_status.config(text="⏳ 开始批量处理...", style="Status.Busy.TLabel")
         self.root.update()
 
-        try:
-            for idx, item in enumerate(items):
-                if self._queue_cancel:
-                    cancelled = total - idx
-                    break
-                if not isinstance(item, QueueItem):
-                    item = QueueItem.from_legacy(item)
-                mode = item.export_mode
-                ext = item.ext
-                mode_tag = "" if mode is None else f"_{mode}"
+        def on_progress(done, _total, out_path):
+            self.progress.config(value=done)
+            self.lbl_queue_status.config(
+                text=f"⏳ 处理中 {done}/{total}：{os.path.basename(out_path)}",
+                style="Status.Busy.TLabel")
+            self.root.update()
 
-                palette_internal = self._display_to_internal(item.params.palette)
-                grid_color = hex_to_rgb_safe(item.params.grid_color)
-                cell_px = item.params.cell_px
-                grid_w = item.params.grid_w
-                grid_h = item.params.grid_h
-                src_name = os.path.splitext(os.path.basename(item.image_path))[0]
-                base = f"perler_{src_name}_{grid_w}x{grid_h}_{palette_internal}{mode_tag}"
-                out_path = self._unique_path(out_dir, base, ext)
-                img = None
-                try:
-                    result = self.processor.process_image(
-                        item.image_path, grid_w, grid_h,
-                        cell_size=cell_px,
-                        show_grid=item.params.show_grid,
-                        grid_color=grid_color, palette_name=palette_internal,
-                        show_color_legend=item.params.show_legend,
-                        show_row_col_labels=item.params.show_labels,
-                        fit_box=item.params.fit_box,
-                        exact_grid=item.params.exact_grid,
-                        save=False, cancel_callback=lambda: self._queue_cancel)
-                    if result is None:
-                        if self._queue_cancel:
-                            cancelled = total - idx
-                            break
-                        raise RuntimeError("生成失败")
-                    if self._queue_cancel:
-                        cancelled = total - idx
-                        break
-                    img = result.chart
-                    if mode:
-                        self.processor.export_pdf(img, out_path, mode, result.cell_size)
-                    else:
-                        img.save(out_path)
-                    success.append(out_path)
-                    self.history_mgr.add_record(item.image_path, out_path,
-                                                grid_w, grid_h,
-                                                item.params.ratio,
-                                                cell_px,
-                                                item.params.show_grid,
-                                                item.params.grid_color,
-                                                item.params.palette,
-                                                item.params.show_labels)
-                except Exception as e:
-                    failed.append((os.path.basename(item.image_path), str(e)))
-                finally:
-                    if img is not None:
-                        try:
-                            img.close()
-                        except Exception:
-                            pass
-                self.progress.config(value=idx + 1)
-                self.lbl_queue_status.config(
-                    text=f"⏳ 处理中 {idx + 1}/{total}：{os.path.basename(out_path)}", style="Status.Busy.TLabel")
-                self.root.update()
+        try:
+            result = self.batch_service.process(
+                items, out_dir,
+                on_progress=on_progress,
+                is_cancelled=lambda: self._queue_cancel)
         finally:
             self.refresh_history_list()
-            self.progress.config(value=min(idx + 1, total) if cancelled else total)
+            self.progress.config(value=min(len(result.success) + len(result.failed),
+                                          total) if result.cancelled else total)
             self.btn_queue_start.config(state=tk.NORMAL)
             self.btn_queue_cancel.config(state=tk.DISABLED)
             self.is_processing = False
             self._queue_cancel = False
 
+        success = result.success
+        failed = result.failed
+        cancelled = result.cancelled_remaining
         if cancelled:
             self.lbl_queue_status.config(
                 text=f"⏹ 已取消：成功 {len(success)}，失败 {len(failed)}，剩余 {cancelled}",

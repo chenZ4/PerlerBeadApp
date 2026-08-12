@@ -387,6 +387,76 @@ def test_models():
         report("hex_to_rgb 非法抛错", True)
 
 
+def test_services():
+    print("== 测试0b: 服务层（ChartService/BatchService 无界面单测） ==")
+    import os as _os
+    import tempfile as _tempfile
+
+    from core.history_manager import HistoryManager
+    from core.models import (
+        RATIO_FIT_BOX,
+        RATIO_ORIGINAL,
+        GenerateParams,
+        QueueItem,
+    )
+    from core.services import BatchService, ChartService
+
+    proc = ImageProcessor()
+    chart = ChartService(proc)
+    src = make_source(400, 300)  # 4:3
+
+    r = chart.generate(src, GenerateParams(grid_w=40, grid_h=40, ratio="1:1 (正方形)"))
+    report("ChartService 固定比例精确网格", r is not None
+           and r.grid_w == 40 and r.grid_h == 40, f"grid={getattr(r, 'grid_w', None)}x{getattr(r, 'grid_h', None)}")
+    if r:
+        r.chart.close()
+
+    r2 = chart.generate(src, GenerateParams(grid_w=40, grid_h=40, ratio=RATIO_ORIGINAL))
+    report("ChartService 原始比例按源图比例", r2 is not None and r2.grid_w == 40 and r2.grid_h == 30,
+           f"grid={getattr(r2, 'grid_w', None)}x{getattr(r2, 'grid_h', None)}")
+    if r2:
+        r2.chart.close()
+
+    r3 = chart.generate(src, GenerateParams(grid_w=40, grid_h=40, ratio=RATIO_FIT_BOX))
+    report("ChartService 等比完整", r3 is not None and r3.grid_w == 40 and r3.grid_h == 30)
+    if r3:
+        r3.chart.close()
+
+    tmp_dir = _tempfile.mkdtemp(prefix="perler_svc_")
+    out_dir = _os.path.join(tmp_dir, "out")
+    _os.makedirs(out_dir)
+    history = HistoryManager()
+    batch = BatchService(proc, history)
+    items = [
+        QueueItem(image_path=src, params=GenerateParams(grid_w=20, grid_h=20), fmt="PNG"),
+        QueueItem(image_path=src, params=GenerateParams(grid_w=20, grid_h=20), fmt="PDF(A4适应)"),
+    ]
+    progress = []
+    res = batch.process(items, out_dir, on_progress=lambda d, t, p: progress.append((d, t)))
+    files = sorted(_os.listdir(out_dir))
+    report("BatchService 处理 PNG+PDF 成功", len(res.success) == 2
+           and any(f.endswith(".png") for f in files) and any(f.endswith(".pdf") for f in files),
+           str(files))
+    report("BatchService 进度回调", progress == [(1, 2), (2, 2)], str(progress))
+    report("BatchService 历史记录同步", len(history.get_list()) == 2)
+
+    # 取消：第一项即取消
+    cancelled_at = [0]
+    def is_cancelled():
+        cancelled_at[0] += 1
+        return True
+    res2 = batch.process(items, out_dir, is_cancelled=is_cancelled)
+    report("BatchService 立即取消", res2.cancelled_remaining == 2
+           and res2.success == [] and res2.failed == [], str(res2))
+
+    # 失败项：不存在的图片
+    bad = [QueueItem(image_path=_os.path.join(tmp_dir, "nope.png"),
+                     params=GenerateParams(grid_w=10, grid_h=10))]
+    res3 = batch.process(bad, out_dir)
+    report("BatchService 失败项汇总不崩溃", len(res3.failed) == 1
+           and res3.success == [] and not res3.cancelled, str(res3.failed))
+
+
 def test_hex_to_rgb():
     print("== 测试1b: hex_to_rgb 输入防御 ==")
     from ui.desktop_ui import DesktopUI
@@ -863,6 +933,7 @@ def test_stage3():
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
     test_models()
+    test_services()
     test_colors()
     test_hex_to_rgb()
     test_processor()

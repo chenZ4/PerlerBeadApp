@@ -187,4 +187,12 @@ def get_palette(palette_name):
     return ColorPalette(palette_name)
 
 
+def display_to_internal(display_name, default="mard_221"):
+    """色卡展示名 → internal 名（未知名称回退 mard_221）"""
+    for display, internal in PALETTE_OPTIONS:
+        if display == display_name:
+            return internal
+    return default
+
+
 load_palettes()
