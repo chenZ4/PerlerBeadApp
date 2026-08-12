@@ -23,7 +23,9 @@ MAX_GRID_SIZE = 500
 BIG_GRID_WARN = 40000
 RATIO_ORIGINAL = "按原图比例（宽为基准）"
 RATIO_FIT_BOX = "等比完整（适应框内）"
-RATIOS = [RATIO_ORIGINAL, RATIO_FIT_BOX, "1:1 (正方形)", "4:3", "3:4", "16:9", "9:16", "自定义"]
+# 固定比例：网格尺寸必须精确，不允许引擎按源图比例重算
+RATIO_FIXED = ["1:1 (正方形)", "4:3", "3:4", "16:9", "9:16"]
+RATIOS = [RATIO_ORIGINAL, RATIO_FIT_BOX] + RATIO_FIXED + ["自定义"]
 
 PALETTE_MAP = {display: internal for display, internal in PALETTE_OPTIONS}
 
@@ -566,7 +568,7 @@ class DesktopUI:
         elif widget == self.entry_h:
             self._calculate_dimension('h')
         self._update_cm_hint()
-        self.generate_preview()
+        self._trigger_preview()
 
     def _on_ratio_change(self, event=None):
         self._save_current_state()
@@ -737,6 +739,7 @@ class DesktopUI:
             palette_name=self._current_palette(), show_color_legend=show_legend,
             show_row_col_labels=show_labels, show_finished=show_finished,
             fit_box=(self.ratio_var.get() == RATIO_FIT_BOX),
+            exact_grid=(self.ratio_var.get() in RATIO_FIXED),
             save=False, cancel_callback=cancel_callback)
 
     def _apply_result(self, result):
@@ -1298,6 +1301,7 @@ class DesktopUI:
                         show_color_legend=item.get('show_legend', True),
                         show_row_col_labels=item.get('show_labels', True),
                         fit_box=(item.get('ratio') == RATIO_FIT_BOX),
+                        exact_grid=(item.get('ratio') in RATIO_FIXED),
                         save=False, cancel_callback=lambda: self._queue_cancel)
                     if result is None:
                         if self._queue_cancel:
@@ -1335,7 +1339,7 @@ class DesktopUI:
                 self.root.update()
         finally:
             self.refresh_history_list()
-            self.progress.config(value=total)
+            self.progress.config(value=min(idx + 1, total) if cancelled else total)
             self.btn_queue_start.config(state=tk.NORMAL)
             self.btn_queue_cancel.config(state=tk.DISABLED)
             self.is_processing = False

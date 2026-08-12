@@ -102,6 +102,30 @@ pump()
 report("撤销恢复宽度", app.entry_w.get() == "50", app.entry_w.get())
 report("撤销恢复显示标号", app.show_labels_var.get() is True)
 
+print("== GUI: 固定比例精确网格（主诉修复回归） ==")
+app.ratio_var.set("1:1 (正方形)")
+app._on_ratio_change()
+app.entry_w.delete(0, tk.END)
+app.entry_w.insert(0, "40")
+app._calculate_dimension('w')
+pump()
+report("1:1 联动高=宽", app.entry_h.get() == "40", app.entry_h.get())
+app.generate_preview()
+pump()
+report("1:1 生成 40×40 不被源图比例覆盖",
+       "网格：40×40" in app.lbl_color_stats.cget("text"),
+       app.lbl_color_stats.cget("text"))
+app.ratio_var.set("按原图比例（宽为基准）")
+app._on_ratio_change()
+app.entry_w.delete(0, tk.END)
+app.entry_w.insert(0, "50")
+app.entry_h.delete(0, tk.END)
+app.entry_h.insert(0, "50")
+if app.preview_timer:
+    root.after_cancel(app.preview_timer)
+    app.preview_timer = None
+pump()
+
 print("== GUI: 400% 放大缩放条可见 ==")
 app.fit_var.set(False)
 app.zoom_var.set(400)
