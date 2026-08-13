@@ -118,6 +118,39 @@ final class GridModeTests: XCTestCase {
         XCTAssertEqual(vm.gridH, "30")
     }
 
+    // 实时联动：编辑宽立即联动高（1:1），且联动回声不破坏状态
+    func testImmediateLinkOnWidthEdit() {
+        vm.ratioMode = "1:1"
+        vm.gridW = "29"
+        vm.gridH = "29"
+        vm.gridW = "40"
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridH, "40", "改宽应立即联动高")
+        vm.gridFieldEdited("h")   // 程序写入的回声，应被忽略
+        XCTAssertEqual(vm.gridW, "40")
+        XCTAssertEqual(vm.gridH, "40")
+    }
+
+    // 实时联动：编辑高立即联动宽（4:3 双向）
+    func testImmediateLinkOnHeightEdit() {
+        vm.ratioMode = "4:3"
+        vm.gridW = "10"
+        vm.gridH = "30"
+        vm.gridFieldEdited("h")
+        XCTAssertEqual(vm.gridW, "40", "改高应立即联动宽")
+        XCTAssertEqual(vm.gridH, "30")
+    }
+
+    // 实时联动：清空/半输入不联动另一侧
+    func testImmediateLinkSkipsInvalidInput() {
+        vm.ratioMode = "1:1"
+        vm.gridW = "40"
+        vm.gridH = "40"
+        vm.gridW = ""
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridH, "40", "清空宽时不应联动高")
+    }
+
     // 生成前自动联动：1:1 下只改宽、高未联动 → 生成仍为正方形
     func testGenerateRelinksFromWidth() {
         let src = makeTestImage()

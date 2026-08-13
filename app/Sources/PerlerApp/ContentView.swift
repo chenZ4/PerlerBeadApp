@@ -47,12 +47,12 @@ struct ContentView: View {
                 }
 
                 glassSection("网格") {
-                    GridFieldRow(label: "宽 (颗)", text: $vm.gridW) {
-                        vm.commitDimension("w")
-                    }
-                    GridFieldRow(label: "高 (颗)", text: $vm.gridH) {
-                        vm.commitDimension("h")
-                    }
+                    GridFieldRow(label: "宽 (颗)", text: $vm.gridW,
+                                 onEdit: { vm.gridFieldEdited("w") },
+                                 onSubmit: { vm.commitDimension("w") })
+                    GridFieldRow(label: "高 (颗)", text: $vm.gridH,
+                                 onEdit: { vm.gridFieldEdited("h") },
+                                 onSubmit: { vm.commitDimension("h") })
                     GridFieldRow(label: "每格像素", text: $vm.cellSize)
                     Picker("比例", selection: $vm.ratioMode) {
                         ForEach(vm.ratioOptions, id: \.self) { option in
@@ -277,6 +277,7 @@ struct ContentView: View {
 struct GridFieldRow: View {
     let label: String
     @Binding var text: String
+    var onEdit: (() -> Void)? = nil
     var onSubmit: (() -> Void)? = nil
 
     var body: some View {
@@ -285,6 +286,7 @@ struct GridFieldRow: View {
             TextField(label, text: $text)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: .infinity)
+                .onChange(of: text) { _, _ in onEdit?() }
                 .onSubmit { onSubmit?() }
         }
     }

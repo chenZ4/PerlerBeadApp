@@ -29,6 +29,9 @@ final class AppViewModel: ObservableObject {
     private var lastEditedDim = "w"
     /// 程序写入联动值时抑制 didSet 记录（避免联动自身被当作用户编辑）
     private var linking = false
+    /// 最近一次程序写入的字段值：用于区分「用户编辑」与「联动回声」
+    private var lastProgrammaticW: String?
+    private var lastProgrammaticH: String?
     @Published var gridW = "29" {
         didSet { if !linking && gridW != oldValue { lastEditedDim = "w" } }
     }
@@ -93,16 +96,39 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// 程序写入联动值（统一入口：置 linking 抑制 didSet 并记录回声指纹）
+    private func writeLinked(_ w: Int, _ h: Int) {
+        linking = true
+        gridW = "\(w)"
+        gridH = "\(h)"
+        lastProgrammaticW = gridW
+        lastProgrammaticH = gridH
+        linking = false
+    }
+
     /// 选择固定比例时联动（对齐 Tk 版双向联动行为）
     func applyRatioLink(source: String = "w") {
         let w = clampedGrid(gridW, fallback: 50)
         let h = clampedGrid(gridH, fallback: 50)
         let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
-        if nw == w && nh == h { return }
-        linking = true
-        gridW = "\(nw)"
-        gridH = "\(nh)"
-        linking = false
+        writeLinked(nw, nh)
+    }
+
+    /// 输入框内容变化 → 立即联动另一侧（实时联动）
+    /// 仅当两侧都是合法数字时才联动，避免清空/半输入时误算；
+    /// 程序写入的回声（值与上次联动结果一致）会被忽略，防止覆盖 lastEditedDim。
+    func gridFieldEdited(_ source: String) {
+        if gridW == lastProgrammaticW && gridH == lastProgrammaticH { return }
+        guard Int(gridW.trimmingCharacters(in: .whitespaces)) != nil,
+              Int(gridH.trimmingCharacters(in: .whitespaces)) != nil else {
+            lastEditedDim = source
+            return
+        }
+        lastEditedDim = source
+        let w = clampedGrid(gridW, fallback: 50)
+        let h = clampedGrid(gridH, fallback: 50)
+        let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
+        writeLinked(nw, nh)
     }
 
     /// 输入框回车提交：规范化当前维度并联动另一侧
@@ -111,10 +137,7 @@ final class AppViewModel: ObservableObject {
         let w = clampedGrid(gridW, fallback: 50)
         let h = clampedGrid(gridH, fallback: 50)
         let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
-        linking = true
-        gridW = "\(nw)"
-        gridH = "\(nh)"
-        linking = false
+        writeLinked(nw, nh)
     }
 
     // MARK: 特效（全部默认关闭）
@@ -311,10 +334,7 @@ final class AppViewModel: ObservableObject {
             let (nw, nh) = linkedDimensions(source: lastEditedDim, w: w, h: h)
             w = nw
             h = nh
-            linking = true
-            gridW = "\(w)"
-            gridH = "\(h)"
-            linking = false
+            writeLinked(nw, nh)
         }
         let params: [String: Any] = [
             "image_path": path,
