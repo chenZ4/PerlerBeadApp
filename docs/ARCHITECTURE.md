@@ -134,7 +134,8 @@ Swift 版 2.1.3 已修复。
 
 比例联动规则（`core.models.link_dimensions`，Tk 与 Swift 行为对齐）：
 - 双向联动：编辑宽 → 高跟随；编辑高 → 宽跟随（四舍五入 `round()`）
-- Swift 版生成前按 `lastEditedDim` 自动联动兜底
+- Tk 版：失焦/回车时联动；Swift 版：**输入实时联动**（半输入/清空不联动），
+  且生成前按 `lastEditedDim` 自动联动兜底
 
 ## 5. 测试策略
 
