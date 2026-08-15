@@ -41,16 +41,17 @@ class BatchService:
 
     def _process_one(self, out_dir: str, item: QueueItem):
         """处理单个队列项，返回导出路径；取消时返回 None"""
+        params = item.params.clamp()
         out_path = self._build_output(out_dir, item)
         result = self.processor.process_image(
-            item.image_path, item.params.grid_w, item.params.grid_h,
-            cell_size=item.params.cell_px,
-            show_grid=item.params.show_grid,
-            grid_color=item.params.grid_rgb,
-            palette_name=display_to_internal(item.params.palette),
-            show_color_legend=item.params.show_legend,
-            show_row_col_labels=item.params.show_labels,
-            fit_box=item.params.fit_box, exact_grid=item.params.exact_grid,
+            item.image_path, params.grid_w, params.grid_h,
+            cell_size=params.cell_px,
+            show_grid=params.show_grid,
+            grid_color=params.grid_rgb,
+            palette_name=display_to_internal(params.palette),
+            show_color_legend=params.show_legend,
+            show_row_col_labels=params.show_labels,
+            fit_box=params.fit_box, exact_grid=params.exact_grid,
             save=False, cancel_callback=lambda: self._cancelled())
         if result is None:
             if self._cancelled():
@@ -68,10 +69,10 @@ class BatchService:
             img.close()
         self.history_mgr.add_record(
             item.image_path, out_path,
-            item.params.grid_w, item.params.grid_h, item.params.ratio,
-            item.params.cell_px, item.params.show_grid,
-            item.params.grid_color, item.params.palette,
-            item.params.show_labels)
+            params.grid_w, params.grid_h, params.ratio,
+            params.cell_px, params.show_grid,
+            params.grid_color, params.palette,
+            params.show_labels, params.show_legend)
         return out_path
 
     def process(self, items: List[QueueItem], out_dir: str,
@@ -96,7 +97,10 @@ class BatchService:
                 except Exception as e:
                     result.failed.append((os.path.basename(item.image_path), str(e)))
                 if on_progress:
-                    on_progress(idx + 1, total, out_path or "")
+                    try:
+                        on_progress(idx + 1, total, out_path or "")
+                    except Exception:
+                        pass
         finally:
             self._cancelled = lambda: False
         return result

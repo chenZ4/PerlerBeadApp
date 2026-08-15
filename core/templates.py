@@ -1,6 +1,7 @@
 # core/templates.py - 内置模板库（data/templates/*.json）
 import json
 import os
+import re
 
 from PIL import Image
 
@@ -8,6 +9,12 @@ from .colors import get_palette
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE_DIR = os.path.join(BASE_DIR, "data", "templates")
+
+_TEMPLATE_ID_RE = re.compile(r"^[\w-]{1,64}$")
+
+
+def is_safe_template_id(template_id):
+    return bool(template_id) and bool(_TEMPLATE_ID_RE.match(str(template_id)))
 
 
 def list_templates():
@@ -35,6 +42,8 @@ def list_templates():
 
 def load_template(template_id):
     """返回模板 dict（含 pixels）或 None"""
+    if not is_safe_template_id(template_id):
+        return None
     path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
     try:
         with open(path, "r", encoding="utf-8") as f:

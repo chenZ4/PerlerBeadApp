@@ -41,21 +41,25 @@ def _max_colors(idx, params, ctx):
         return idx
     limit = int(params.get("max", 12))
     limit = max(1, min(limit, len(palette.colors)))
-    counts = np.bincount(idx.reshape(-1), minlength=len(palette.colors))
+    flat = idx.reshape(-1)
+    out = np.empty_like(flat)
+    empty = flat < 0
+    out[empty] = -1
+    valid = flat[~empty]
+    if valid.size == 0:
+        return out.reshape(idx.shape)
+    counts = np.bincount(valid, minlength=len(palette.colors))
     top = np.argsort(counts)[::-1][:limit]
     wr, wg, wb = RGB_WEIGHTS
     colors = np.asarray(palette.colors, dtype=np.float32)
     top_colors = colors[top]
-    flat = idx.reshape(-1)
-    out = np.empty_like(flat)
-    diff = flat[:, None] != top[None, :]
-    for i, orig in enumerate(flat):
+    for i, orig in enumerate(valid):
         if orig in top:
-            out[i] = orig
             continue
         c = colors[orig]
         d = ((top_colors - c) ** 2 * np.asarray([wr, wg, wb])).sum(-1)
-        out[i] = top[int(d.argmin())]
+        valid[i] = top[int(d.argmin())]
+    out[~empty] = valid
     return out.reshape(idx.shape)
 
 
@@ -91,8 +95,10 @@ def _preset(idx, params, ctx):
     subset_idx = np.asarray(subset, dtype=np.int32)
     flat = idx.reshape(-1)
     out = np.empty_like(flat)
-    for i, orig in enumerate(flat):
-        out[i] = subset_idx[map_to_preset[orig]]
+    empty = flat < 0
+    out[empty] = -1
+    for i in np.nonzero(~empty)[0]:
+        out[i] = subset_idx[map_to_preset[flat[i]]]
     return out.reshape(idx.shape)
 
 

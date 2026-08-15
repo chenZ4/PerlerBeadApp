@@ -8,6 +8,7 @@ from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
 from .colors import get_palette
+from .models import MAX_GRID_SIZE
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -99,8 +100,8 @@ class ImageProcessor:
         返回: GenerateResult；失败/取消返回 None
         """
         try:
-            grid_w = max(1, int(grid_w))
-            grid_h = max(1, int(grid_h))
+            grid_w = max(1, min(int(grid_w), MAX_GRID_SIZE))
+            grid_h = max(1, min(int(grid_h), MAX_GRID_SIZE))
             with Image.open(image_path) as opened:
                 img = opened.convert("RGB")
             orig_w, orig_h = img.size
@@ -206,6 +207,7 @@ class ImageProcessor:
             if grid_overrides:
                 color_stats = self._apply_grid_overrides(
                     grid_overrides, palette, grid_colors, grid_codes, grid_idx)
+                total_beads = sum(info['count'] for info in color_stats.values())
 
             # 3.5 特效：网格阶段（作用于映射后的 grid 索引矩阵）
             if effects:
@@ -236,8 +238,14 @@ class ImageProcessor:
                 if grid_overrides:
                     color_stats = self._apply_grid_overrides(
                         grid_overrides, palette, grid_colors, grid_codes, grid_idx)
+                total_beads = sum(info['count'] for info in color_stats.values())
 
             # 4. 计算画布尺寸（每格像素与格子数解耦）
+            if cell_size is not None:
+                try:
+                    cell_size = int(cell_size)
+                except (TypeError, ValueError):
+                    cell_size = 0
             if cell_size and cell_size > 0:
                 cell_size = int(cell_size)
                 cap = max(1, max_canvas // max(final_grid_w, final_grid_h, 1))
@@ -313,7 +321,6 @@ class ImageProcessor:
                     x2 = x1 + cell_size
                     y2 = y1 + cell_size
 
-                    color = grid_colors[y][x]
                     draw.rectangle([x1, y1, x2, y2], fill=color)
 
                     if finished_draw is not None:

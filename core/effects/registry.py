@@ -49,7 +49,8 @@ def _coerce_params(params, schema):
                 if "max" in meta:
                     value = min(meta["max"], value)
             elif meta.get("type") == "bool":
-                value = bool(value)
+                from ..models import as_bool
+                value = as_bool(value, bool(meta.get("default", False)))
             elif meta.get("type") == "color":
                 value = str(value)
             elif meta.get("type") == "choice":

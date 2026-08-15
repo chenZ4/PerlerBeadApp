@@ -1,6 +1,7 @@
 # core/effects/filters.py - 滤镜与图纸风格特效
 from PIL import Image, ImageEnhance
 
+from ..colors import hex_to_rgb_safe
 from .base import EffectSpec
 from .registry import register
 
@@ -63,20 +64,10 @@ register(EffectSpec(
 ), _dither_marker)
 
 
-def _hex_rgb(value, default):
-    text = str(value).strip().lstrip('#')
-    if len(text) == 6:
-        try:
-            return (int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16))
-        except ValueError:
-            pass
-    return default
-
-
 def _dark_chart(opts, params, ctx):
     opts["dark"] = True
-    opts["background"] = _hex_rgb(params.get("background"), (30, 30, 30))
-    opts["grid_color"] = _hex_rgb(params.get("grid_color"), (90, 90, 90))
+    opts["background"] = hex_to_rgb_safe(params.get("background"), (30, 30, 30))
+    opts["grid_color"] = hex_to_rgb_safe(params.get("grid_color"), (90, 90, 90))
     return opts
 
 

@@ -2,18 +2,9 @@
 import numpy as np
 from PIL import Image, ImageEnhance
 
+from ..colors import hex_to_rgb_safe
 from .base import EffectSpec
 from .registry import register
-
-
-def _hex_rgb(value, default):
-    text = str(value).strip().lstrip('#')
-    if len(text) == 6:
-        try:
-            return (int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16))
-        except ValueError:
-            pass
-    return default
 
 
 def _cel_shade(img, params, ctx):
@@ -58,8 +49,8 @@ register(EffectSpec(
 
 def _duotone(img, params, ctx):
     """双色调：灰度映射到双色渐变，复古海报感"""
-    c1 = _hex_rgb(params.get("color1"), (30, 30, 30))
-    c2 = _hex_rgb(params.get("color2"), (240, 240, 240))
+    c1 = hex_to_rgb_safe(params.get("color1"), (30, 30, 30))
+    c2 = hex_to_rgb_safe(params.get("color2"), (240, 240, 240))
     arr = np.asarray(img.convert("L"), dtype=np.float32) / 255.0
     t = arr[..., None]
     out = (np.asarray(c1, dtype=np.float32) * (1 - t)
@@ -81,7 +72,7 @@ register(EffectSpec(
 
 def _bg_remove(img, params, ctx):
     """背景去除：匹配背景色 → 透明（透明格 = 空格，无珠）"""
-    target = _hex_rgb(params.get("color", "#FFFFFF"), (255, 255, 255))
+    target = hex_to_rgb_safe(params.get("color", "#FFFFFF"), (255, 255, 255))
     tol = int(params.get("tolerance", 30))
     tol = max(0, min(tol, 255))
     rgba = img.convert("RGBA")

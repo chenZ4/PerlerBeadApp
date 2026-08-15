@@ -2,6 +2,8 @@
 import json
 import os
 
+from .models import hex_to_rgb_safe  # noqa: F401  (re-export for effects)
+
 # 感知加权 RGB（人眼敏感度）：R 0.299 / G 0.587 / B 0.114
 RGB_WEIGHTS = (0.299, 0.587, 0.114)
 
@@ -20,6 +22,18 @@ _FALLBACK = {
 
 _PALETTE_CACHE = {}
 PALETTE_OPTIONS = []
+
+
+def weighted_distance(rgb1, rgb2):
+    """感知加权 RGB 距离平方（R 0.299 / G 0.587 / B 0.114）"""
+    wr, wg, wb = RGB_WEIGHTS
+    return ((rgb1[0] - rgb2[0]) ** 2 * wr
+            + (rgb1[1] - rgb2[1]) ** 2 * wg
+            + (rgb1[2] - rgb2[2]) ** 2 * wb)
+
+
+def rgb_to_hex(rgb):
+    return '#{:02X}{:02X}{:02X}'.format(*rgb)
 
 
 def _validate(data):
@@ -43,6 +57,12 @@ def _validate(data):
             return False
     if len(set(codes)) != len(codes):
         return False
+    for code in codes:
+        if not isinstance(code, str) or not code.strip():
+            return False
+    for name in names:
+        if not isinstance(name, str):
+            return False
     return True
 
 
@@ -88,7 +108,7 @@ class ColorPalette:
 
     def _rgb_to_hex(self, rgb):
         """RGB 转 HEX"""
-        return '#{:02X}{:02X}{:02X}'.format(*rgb)
+        return rgb_to_hex(rgb)
 
     @property
     def hex_codes(self):
@@ -145,16 +165,11 @@ class ColorPalette:
 
     def find_closest_color(self, r, g, b):
         """找到色卡中最接近的颜色（加权距离，备用路径）"""
-        wr, wg, wb = RGB_WEIGHTS
         min_dist = float('inf')
         closest_index = 0
 
         for i, color in enumerate(self.colors):
-            cr, cg, cb = color
-            dr = r - cr
-            dg = g - cg
-            db = b - cb
-            dist = dr * dr * wr + dg * dg * wg + db * db * wb
+            dist = weighted_distance((r, g, b), color)
             if dist < min_dist:
                 min_dist = dist
                 closest_index = i

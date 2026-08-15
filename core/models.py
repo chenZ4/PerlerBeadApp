@@ -71,6 +71,21 @@ def parse_cell_px(text):
     return parse_int(text, DEFAULT_CELL_PX, MIN_CELL_PX, MAX_CELL_PX)
 
 
+def as_bool(value, default=True):
+    """宽松布尔转换：bool / 'true'/'false'/'1'/'0' → bool，其他回退 default"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("true", "1", "yes", "on"):
+            return True
+        if text in ("false", "0", "no", "off"):
+            return False
+    return default
+
+
 def link_dimensions(source, w, h, ratio):
     """固定比例下按编辑来源联动另一维度（对齐 Tk 版双向联动行为）。
 
@@ -111,7 +126,7 @@ class GenerateParams:
     grid_h: int = DEFAULT_GRID
     cell_px: int = DEFAULT_CELL_PX
     ratio: str = RATIO_ORIGINAL
-    palette: str = DEFAULT_PALETTE          # 展示名（PALETTE_MAP 转 internal）
+    palette: str = DEFAULT_PALETTE          # 展示名（display_to_internal 转 internal）
     show_grid: bool = True
     show_labels: bool = True
     show_legend: bool = True
@@ -152,16 +167,18 @@ class GenerateParams:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "GenerateParams":
-        cell_px = d.get("cell_px", d.get("output_size", d.get("canvas_size", DEFAULT_CELL_PX)))
+        raw_cell_px = d.get("cell_px", d.get("output_size", d.get("canvas_size", DEFAULT_CELL_PX)))
+        raw_w = d.get("width", d.get("grid_w", DEFAULT_GRID))
+        raw_h = d.get("height", d.get("grid_h", DEFAULT_GRID))
         return cls(
-            grid_w=int(d.get("width", d.get("grid_w", DEFAULT_GRID))),
-            grid_h=int(d.get("height", d.get("grid_h", DEFAULT_GRID))),
-            cell_px=int(cell_px),
+            grid_w=parse_grid_w(raw_w),
+            grid_h=parse_grid_h(raw_h),
+            cell_px=parse_cell_px(raw_cell_px),
             ratio=str(d.get("ratio", RATIO_ORIGINAL)),
             palette=str(d.get("palette", DEFAULT_PALETTE)),
-            show_grid=bool(d.get("show_grid", True)),
-            show_labels=bool(d.get("show_labels", True)),
-            show_legend=bool(d.get("show_legend", True)),
+            show_grid=as_bool(d.get("show_grid", True)),
+            show_labels=as_bool(d.get("show_labels", True)),
+            show_legend=as_bool(d.get("show_legend", True)),
             grid_color=str(d.get("grid_color", DEFAULT_GRID_COLOR)),
         )
 

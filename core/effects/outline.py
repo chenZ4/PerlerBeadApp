@@ -2,27 +2,18 @@
 import numpy as np
 from PIL import Image, ImageFilter
 
-from ..colors import RGB_WEIGHTS
+from ..colors import weighted_distance, hex_to_rgb_safe
 from .base import EffectSpec
 from .registry import register
 
 
 def _outline_index(palette, color):
     """把描边色 hex 转为色卡最近索引（加权距离）"""
-    text = str(color).strip().lstrip('#')
-    if len(text) == 6:
-        try:
-            target = (int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16))
-        except ValueError:
-            target = (26, 26, 26)
-    else:
-        target = (26, 26, 26)
-    wr, wg, wb = RGB_WEIGHTS
+    target = hex_to_rgb_safe(color, (26, 26, 26))
     best = 0
     best_d = float('inf')
-    for i, (cr, cg, cb) in enumerate(palette.colors):
-        d = ((target[0] - cr) ** 2 * wr + (target[1] - cg) ** 2 * wg
-             + (target[2] - cb) ** 2 * wb)
+    for i, c in enumerate(palette.colors):
+        d = weighted_distance(target, c)
         if d < best_d:
             best_d = d
             best = i

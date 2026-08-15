@@ -63,7 +63,7 @@ class SettingsStore:
 
     # ---------- 批量队列 ----------
     def load_queue(self):
-        """读取队列并迁移为 QueueItem 列表（兼容旧裸 dict 文件）"""
+        """读取队列并迁移为 QueueItem 列表（兼容旧裸 dict 文件；坏项跳过）"""
         try:
             with open(self.queue_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -71,7 +71,15 @@ class SettingsStore:
             return []
         if not isinstance(data, list):
             return []
-        return [QueueItem.from_legacy(i) for i in data if isinstance(i, dict)]
+        items = []
+        for i in data:
+            if not isinstance(i, dict):
+                continue
+            try:
+                items.append(QueueItem.from_legacy(i))
+            except (TypeError, ValueError, KeyError):
+                continue
+        return items
 
     def save_queue(self, items):
         try:
