@@ -51,7 +51,7 @@ conda run -n pindou python tests/gui_smoke.py   # Tk 版 GUI 冒烟（零弹窗�
 cd app && swift test                            # Swift 版（VM + 引擎协议 + 回归）
 ```
 
-当前基线：`run_tests` 148 项 / `gui_smoke` 69 项 / `swift test` 51 项，全部通过。
+当前基线：`run_tests` 191 项 / `gui_smoke` 87 项 / `swift test` 60 项，全部通过。
 
 ## 工程说明
 

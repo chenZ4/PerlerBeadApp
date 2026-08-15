@@ -103,3 +103,41 @@ conda run -n pindou python tests/gui_smoke.py     # GUI 冒烟（67 项，零弹
 
 ## 回滚
 - master + tag v1.0.0 保持 1.0 冻结版；2.0 在 dev-2.0 分支，失败 `git checkout v1.0.0` 即回滚
+
+---
+
+# 2.2.0 修复记录（2026-08-15，全面代码审查修复）
+
+## 测试终态
+
+| 套件 | 通过 | 说明 |
+|---|---|---|
+| `tests/run_tests.py` | 191 | 新增鲁棒性 + 全流程 E2E（异常输入/空格特效/协议安全/取消/退出） |
+| `tests/gui_smoke.py` | 87 | 新增幽灵弹窗/假死注入/撤销去重/损坏历史/定时器残留回归 |
+| `swift test` | 60 | 新增取消/UTF-8 分块/stderr 排空/编辑取消/进度持久化回归 |
+| **合计** | **338 项** | 全绿 |
+
+## 修复清单
+
+### 崩溃级（core）
+- 特效 × 空格：`max_colors` 对透明格 `np.bincount` 崩溃、`preset` 负索引填色 → 空格保持空格；grid 特效后 `total_beads` 重算（此前与图例统计矛盾）
+- 损坏历史记录（字符串 width/output_size、缺字段）不再让引擎启动失败；队列坏项跳过；网格上限 500 三层钳制（防 OOM）；cell_size 字符串容错
+- core_server 协议：错误/取消响应不再被 `ok:True` 包裹（客户端把错误当成功解码）；取消排队期间请求生效；reader 对非对象 JSON 免疫；stdin EOF 哨兵 → 进程优雅退出（不再僵尸）
+
+### 安全（core_server 协议）
+- `track_load/save` key、`template_id` 路径穿越校验；`my_colors_save` 非法数据拒绝写入；`export_png` 异常路径 close
+- 每请求图像对象 `close()`（常驻进程内存不再随生成膨胀）；`_last_progress` 清理
+
+### Tk UI
+- 批处理异常后 `is_processing` 永久假死（finally 引用未绑定变量）→ 预初始化 + 异常提示
+- 历史面板移除"选中即加载"（幽灵警告框/意外重载）；历史记录补存实际网格与 show_legend
+- 色卡窗口关闭后 after 定时器残留 TclError；撤销栈去重（FocusOut/KeyRelease 不再污染）
+- 换图时预览面板清引用（已关闭 PIL 图不再被渲染）；滚轮 bind_all 收束 + 关闭解绑；导出路径统一异常捕获；缩略图缓存上限
+
+### Swift
+- stderr 独立队列读取（串行队列饿死 → 管道写满引擎假死）；闭包弱捕获（引用循环 → 僵尸 Python 进程）
+- `cancel(rid:)` 不再覆盖 pending 条目；编辑请求支持取消；忙时点击忽略；undoEdit 持久化进度
+- 预览 offset 双重应用修复（拖动后点击错位）；UTF-8 按字节切行（中文响应跨块丢字节）；长任务超时 120s；applyResult 移除与 saveTrack 竞态的 loadTrack
+
+### 其他
+- 常量单一来源（DEFAULT_PALETTE/CELL_PX/GRID/ACCENT/cm_hint）；特效公共函数提取；死代码清理；版本 2.2.0

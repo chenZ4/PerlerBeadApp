@@ -4,6 +4,7 @@ import gc
 import os
 import sys
 import tempfile
+import time
 import tracemalloc
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -66,6 +67,14 @@ def pump(n=3):
     for _ in range(n):
         root.update()
         root.update_idletasks()
+
+
+def pump_time(seconds):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        root.update()
+        root.update_idletasks()
+        time.sleep(0.02)
 
 
 print("== GUI: 初始化与主题 ==")
@@ -457,6 +466,152 @@ except Exception as e:
 app._closing = False
 app.root.wait_window = orig_ww
 app._center_toplevel = orig_ct
+
+print("== GUI: 历史面板选中不自动加载（幽灵弹窗回归） ==")
+hp = app.history_panel
+load_calls = []
+orig_load = app.load_selected_history
+app.load_selected_history = lambda: load_calls.append(1)
+hp.list_history.event_generate("<<ListboxSelect>>")
+pump()
+report("历史列表选中不触发加载", len(load_calls) == 0)
+app.load_selected_history = orig_load
+
+warn_calls = []
+orig_warn = du.messagebox.showwarning
+du.messagebox.showwarning = lambda *a, **k: warn_calls.append(a)
+app.save_to_history()
+pump()
+report("保存历史后无幽灵警告框", len(warn_calls) == 0, str(warn_calls))
+hp.list_history.selection_set(0)
+app.delete_selected_history()
+pump()
+report("删除历史后无幽灵警告框", len(warn_calls) == 0, str(warn_calls))
+app.clear_history()
+pump()
+report("清空历史后无幽灵警告框", len(warn_calls) == 0, str(warn_calls))
+du.messagebox.showwarning = orig_warn
+
+print("== GUI: show_legend 历史持久化 ==")
+sp.show_legend_var.set(False)
+app.save_to_history()
+pump()
+hist = app.history_mgr.get_list()[0]
+report("历史记录保存 show_legend=False", hist.get('show_legend') is False, str(hist.get('show_legend')))
+app.history_panel.list_history.selection_set(0)
+app.load_selected_history()
+pump()
+report("加载历史恢复 show_legend=False", sp.show_legend_var.get() is False,
+       str(sp.show_legend_var.get()))
+sp.show_legend_var.set(True)
+app.generate_preview()
+pump()
+
+print("== GUI: 历史损坏记录容错 ==")
+app.history_mgr.history.insert(0, {"width": "abc", "height": None,
+                                   "output_size": "large", "palette": "MARD 221 色",
+                                   "time": "2026-01-01 00:00"})
+app.history_mgr._migrate_history()
+app.refresh_history_list()
+app.history_panel.list_history.selection_set(0)
+try:
+    app.load_selected_history()
+    pump()
+    report("缺失 image_path 历史加载不崩", True)
+except Exception as e:
+    report("缺失 image_path 历史加载不崩", False, str(e))
+report("损坏记录迁移后 width 为整数",
+       isinstance(app.history_mgr.get_record(0).get('width'), int),
+       str(app.history_mgr.get_record(0).get('width')))
+app.history_mgr.delete_record(0)
+app.refresh_history_list()
+
+print("== GUI: 批处理异常注入（假死回归） ==")
+app.select_image()
+pump()
+app.enqueue_item()
+orig_process = app.batch_service.process
+def _boom(*a, **k):
+    raise RuntimeError("注入批量故障")
+app.batch_service.process = _boom
+app.process_queue()
+pump()
+report("批处理异常后 is_processing 复位", app.is_processing is False)
+report("批处理异常后开始按钮恢复",
+       str(app.queue_panel.btn_queue_start.cget('state')) == 'normal',
+       app.queue_panel.btn_queue_start.cget('state'))
+app.batch_service.process = orig_process
+app.clear_queue()
+
+print("== GUI: 导出 PNG 失败注入 ==")
+app.select_image()
+pump()
+orig_save = app.chart_service.save_chart
+def _boom_save(result, path):
+    raise OSError("磁盘满")
+app.chart_service.save_chart = _boom_save
+app.export_png()
+pump()
+report("PNG 导出失败提示且 is_processing 复位", app.is_processing is False)
+app.chart_service.save_chart = orig_save
+app.generate_preview()
+pump()
+
+print("== GUI: 撤销栈去重 ==")
+w0 = sp.entry_w.get()
+app.state.previous_states.clear()
+sp._notify_dimension('w')
+pump()
+report("无变化 FocusOut 不压撤销栈", len(app.state.previous_states) == 0,
+       str(len(app.state.previous_states)))
+sp.entry_w.delete(0, tk.END)
+sp.entry_w.insert(0, str(int(w0) + 5))
+sp._notify_dimension('w')
+pump()
+report("改值 FocusOut 压栈一次", len(app.state.previous_states) == 1,
+       str(len(app.state.previous_states)))
+sp._notify_dimension('w')
+pump()
+report("重复 FocusOut 不重复压栈", len(app.state.previous_states) == 1,
+       str(len(app.state.previous_states)))
+app.undo()
+pump()
+report("撤销后宽度恢复", sp.entry_w.get() == w0, f"{sp.entry_w.get()} vs {w0}")
+
+print("== GUI: 色卡窗口关闭后定时器无残留报错 ==")
+tk_errors = []
+root.report_callback_exception = lambda *a: tk_errors.append(a)
+app.open_color_chart()
+pump()
+ccw2 = app.color_chart_window
+ccw2._copy_to_clipboard({'code': 'H1', 'name': '红', 'rgb': (255, 0, 0), 'hex': '#ff0000'})
+ccw2.search_var.set("红")
+ccw2._on_search()
+ccw2._on_close()
+pump_time(2.6)
+report("色卡窗口关闭后 after 定时器无 TclError", len(tk_errors) == 0, str(tk_errors[:2]))
+root.report_callback_exception = lambda *a: None
+
+print("== GUI: 坏队列文件容错 ==")
+from core.settings import SettingsStore
+from core.models import QueueItem as _QI
+bad_q = os.path.join(TEST_DIR, "bad_queue.json")
+with open(bad_q, "w", encoding="utf-8") as f:
+    f.write('[{"image_path": "/tmp/x.jpg", "width": "abc", "height": 5}, '
+            '"not_a_dict", {"image_path": "/tmp/y.jpg", "width": 1}]')
+items = SettingsStore(queue_file=bad_q).load_queue()
+report("坏队列文件加载不崩且项合法",
+       len(items) == 2
+       and all(isinstance(i, _QI) and 1 <= i.params.grid_w <= 500 for i in items),
+       f"items={len(items)}")
+
+print("== GUI: 缩略图缓存上限 ==")
+qp._thumb_cache = {}
+for i in range(210):
+    qp._thumb_cache[str(i)] = object()
+qp._make_thumb(SRC)
+report("缩略图缓存 ≤ 200 条", len(qp._thumb_cache) <= 200, str(len(qp._thumb_cache)))
+qp._thumb_cache = {}
 
 print("== GUI: 内存（10 次生成+渲染后无持续增长） ==")
 gc.collect()

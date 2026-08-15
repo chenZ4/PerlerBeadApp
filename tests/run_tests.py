@@ -213,6 +213,7 @@ def test_pdf():
 
 def test_history():
     print("== 测试4: 历史记录迁移 ==")
+    import json as _json
     backup = None
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -252,10 +253,44 @@ def test_history():
     hm.history = old
     hm.save_history()
 
+    # 损坏记录迁移：非法类型/缺字段均不崩溃且被修复
+    corrupt = [
+        {"image_path": "/tmp/c.jpg", "save_path": "rel/c.png", "width": "abc", "height": None,
+         "ratio": "原始比例", "output_size": "large", "show_grid": "false",
+         "grid_color": "not_a_color", "palette": "MARD 221 色", "time": "2026-01-01 00:00"},
+        "not_a_dict",
+        {"width": 10, "height": 10},
+    ]
+    try:
+        hm.history = corrupt + old
+        hm._migrate_history()
+        migrated = hm.history
+        report("损坏历史记录迁移不崩溃", len(migrated) == 2 + len(old),
+               f"kept={len(migrated)}")
+        c0 = migrated[0]
+        report("字符串 width/output_size 回退默认值",
+               isinstance(c0['width'], int) and isinstance(c0['output_size'], int),
+               str((c0['width'], c0['output_size'])))
+        report("相对 save_path 绝对化", os.path.isabs(c0['save_path']), str(c0['save_path']))
+        report("非法 grid_color 回退默认", c0['grid_color'] == "#C8C8C8", str(c0['grid_color']))
+        report("非 dict 记录被丢弃", not any(not isinstance(r, dict) for r in migrated))
+        report("缺字段记录补齐", migrated[-1].get('palette') and migrated[-1].get('image_path') == "")
+        # 通过损坏文件直接构造 HistoryManager（引擎启动路径）
+        corrupt_path = os.path.join(TEST_DIR, "corrupt_history.json")
+        with open(corrupt_path, "w", encoding="utf-8") as f:
+            _json.dump(corrupt, f)
+        hm2 = HistoryManager(corrupt_path)
+        report("损坏历史文件可启动（构造不抛）", isinstance(hm2.get_list(), list))
+        report("show_legend 迁移默认 True", all(r.get('show_legend') is True for r in hm2.get_list()))
+    finally:
+        hm.history = old
+        hm.save_history()
+
     hm.add_record("/tmp/x.jpg", "/tmp/x_out.png", 10, 10, "原始比例", 1500, True,
                   "#C8C8C8", "MARD 221 色", True)
     rec = hm.get_record(0)
     report("新记录含 show_labels", rec['show_labels'] is True)
+    report("新记录含 show_legend", rec['show_legend'] is True)
     report("新记录 grid_color 为 hex 字符串", rec['grid_color'] == "#C8C8C8")
     hm.delete_record(0)
     report("删除记录正常", len(hm.get_list()) in (before, before - 1),
@@ -926,6 +961,247 @@ def test_stage3():
     r.chart.close()
 
 
+def test_robustness():
+    print("== 测试7c: 鲁棒性 + 全流程（异常输入/空格特效/协议安全/端到端） ==")
+    import json as _json
+    import subprocess
+    import sys as _sys
+    import time as _time
+    import shutil as _shutil
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # ---------- processor 层 ----------
+    proc = ImageProcessor()
+    src = make_source(200, 200)
+
+    r = proc.process_image(src, 600, 1, cell_size=1, exact_grid=True, save=False)
+    report("引擎网格上限钳制 500（600→500）", r is not None and r.grid_w == 500,
+           str(r.grid_w if r else None))
+    if r:
+        r.chart.close()
+
+    r = proc.process_image(src, 30, 30, cell_size="abc", save=False)
+    report("字符串 cell_size 容错不崩", r is not None)
+    if r:
+        r.chart.close()
+    r = proc.process_image(src, 30, 30, cell_size="40", save=False)
+    report("字符串 cell_size='40' 生效", r is not None and r.cell_size == 40,
+           str(r.cell_size if r else None))
+    if r:
+        r.chart.close()
+
+    # 特效 × 空格（bg_remove 后网格含 -1 空格）
+    white_bg = os.path.join(TEST_DIR, "wb2.png")
+    wimg = Image.new("RGB", (200, 200), (255, 255, 255))
+    wpx = wimg.load()
+    for y in range(60, 140):
+        for x in range(60, 140):
+            wpx[x, y] = (255, 0, 0)
+    wimg.save(white_bg)
+
+    effects_chain = [
+        [{"id": "bg_remove", "params": {"color": "#FFFFFF"}},
+         {"id": "max_colors", "params": {"max": 4}}],
+        [{"id": "bg_remove", "params": {"color": "#FFFFFF"}},
+         {"id": "preset", "params": {"preset": "pastel"}}],
+        [{"id": "bg_remove", "params": {"color": "#FFFFFF"}},
+         {"id": "outline_cell", "params": {}}],
+    ]
+    for i, chain in enumerate(effects_chain):
+        r = proc.process_image(white_bg, 40, 40, cell_size=40, save=False, effects=chain)
+        stats_sum = sum(v['count'] for v in (r.color_stats.values() if r else {}))
+        report(f"bg_remove+特效组合 {i} 不崩溃且统计一致",
+               r is not None and r.total_beads == stats_sum,
+               f"total={r.total_beads if r else '-'} stats={stats_sum}")
+        if r:
+            r.chart.close()
+
+    r_plain = proc.process_image(white_bg, 40, 40, cell_size=40, save=False,
+                                 effects=[{"id": "bg_remove", "params": {"color": "#FFFFFF"}}])
+    r_outline = proc.process_image(white_bg, 40, 40, cell_size=40, save=False,
+                                   effects=[{"id": "bg_remove", "params": {"color": "#FFFFFF"}},
+                                            {"id": "outline_cell", "params": {}}])
+    report("描边填充空格后 total_beads 与图例一致",
+           r_outline.total_beads == sum(v['count'] for v in r_outline.color_stats.values()),
+           f"{r_outline.total_beads} vs {sum(v['count'] for v in r_outline.color_stats.values())}")
+    report("描边填充空格后耗材增加",
+           r_outline.total_beads > r_plain.total_beads,
+           f"{r_outline.total_beads} > {r_plain.total_beads}")
+    r_plain.chart.close()
+    r_outline.chart.close()
+
+    # ---------- My Colors 校验 ----------
+    from core.my_colors import clear_my_colors, save_my_colors
+    clear_my_colors()
+    report("my_colors 垃圾数据拒绝写入",
+           save_my_colors([["a", "b", "c"]], ["x"], ["X1"]) is False)
+    report("my_colors 缺 codes 拒绝写入",
+           save_my_colors([[255, 0, 0]], ["红"]) is False)
+    ok = save_my_colors([[255, 0, 0], [0, 255, 0]], ["红", "绿"], ["M1", "M2"])
+    report("my_colors 合法数据写入", ok is True)
+    clear_my_colors()
+
+    # ---------- 模板路径穿越 ----------
+    from core.templates import load_template
+    report("template_id 路径穿越拒绝", load_template("../../app_settings") is None)
+    report("template_id 绝对路径拒绝", load_template("/etc/passwd") is None)
+    report("合法模板仍可加载", load_template("heart") is not None)
+
+    # ---------- 协议层：全流程 + 异常 ----------
+    server_proc = subprocess.Popen(
+        [_sys.executable, os.path.join(root, "core_server.py")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+    def req(rid, op, params=None):
+        server_proc.stdin.write(_json.dumps({"id": rid, "op": op, "params": params or {}}) + "\n")
+        server_proc.stdin.flush()
+        while True:
+            line = server_proc.stdout.readline()
+            if not line:
+                raise RuntimeError("引擎无响应")
+            msg = _json.loads(line)
+            if msg.get("id") == rid and "event" not in msg:
+                return msg
+
+    def close():
+        try:
+            server_proc.stdin.close()
+            server_proc.wait(timeout=8)
+        except Exception:
+            server_proc.kill()
+
+    try:
+        r = req(1, "ping")
+        report("E2E: 引擎启动 ping", r.get("ok") and r.get("pong"))
+
+        # 垃圾行后引擎仍存活
+        server_proc.stdin.write("[]\n\"str\"\n123\n{broken json\n\n")
+        server_proc.stdin.flush()
+        r = req(2, "ping")
+        report("reader 对非对象/坏 JSON 行免疫", r.get("ok") is True, str(r))
+
+        # 网格钳制（协议层）
+        r = req(3, "generate", {"image_path": src, "grid_w": "99999", "grid_h": "1",
+                                "cell_size": 1, "exact_grid": True})
+        report("协议层 grid_w=99999 钳制到 500", r.get("ok") and r.get("grid_w") == 500,
+               f"grid_w={r.get('grid_w')}")
+        r = req(4, "generate", {"image_path": src, "grid_w": "abc", "grid_h": 10})
+        report("协议层非法网格参数返回 error",
+               r.get("ok") is not True and bool(r.get("error")), str(r))
+
+        # track key 校验
+        r = req(5, "track_load", {"key": "../escape"})
+        report("track_load 路径穿越返回空", r.get("ok") and r.get("track") == [])
+        req(6, "track_save", {"key": "../escape", "cells": ["1:1"]})
+        report("track_save 路径穿越不落盘",
+               not os.path.exists(os.path.join(root, "escape.json")))
+        req(7, "track_save", {"key": "e2e_key", "cells": ["1:1", "2:2"]})
+        r = req(8, "track_load", {"key": "e2e_key"})
+        report("合法 track key 正常读写", r.get("track") == ["1:1", "2:2"])
+        tdir = os.path.join(root, "track")
+        if os.path.isdir(tdir):
+            _shutil.rmtree(tdir, ignore_errors=True)
+
+        # 模板穿越
+        r = req(9, "template_image", {"template_id": "../../app_settings"})
+        report("协议层模板路径穿越拒绝", r.get("ok") is False)
+
+        # my_colors 经协议生成
+        req(10, "my_colors_save", {"colors": [[255, 0, 0], [0, 255, 0]],
+                                    "names": ["红", "绿"], "codes": ["M1", "M2"]})
+        r = req(11, "generate", {"image_path": src, "grid_w": 20, "grid_h": 20,
+                                 "cell_size": 40, "palette": "my_colors", "fit_box": True})
+        codes = set(r.get("color_stats", {}).keys())
+        report("my_colors 经协议可用于生成", r.get("ok") and codes and codes <= {"M1", "M2"},
+               str(codes))
+        req(12, "my_colors_clear")
+        r = req(13, "my_colors_save", {"colors": [["a", "b"]], "names": [], "codes": []})
+        report("协议层 my_colors 垃圾数据拒绝", r.get("ok") is False)
+
+        # export_png 异常路径
+        r = req(14, "export_png", {"source_path": src,
+                                   "save_path": os.path.join(TEST_DIR, "no_such_dir", "x.png")})
+        report("export_png 无效目标返回 error 不崩", r.get("ok") is False and r.get("error"))
+
+        # 编辑排队期间取消
+        server_proc.stdin.write(_json.dumps(
+            {"id": 15, "op": "edit", "params": {"image_path": src, "grid_w": 100,
+                                                 "grid_h": 100, "cell_size": 40,
+                                                 "overrides": [{"x": 0, "y": 0, "code": "H1"}]}}) + "\n")
+        server_proc.stdin.flush()
+        server_proc.stdin.write(_json.dumps({"id": 15, "op": "cancel"}) + "\n")
+        server_proc.stdin.flush()
+        deadline = _time.time() + 30
+        msg = None
+        while _time.time() < deadline:
+            line = server_proc.stdout.readline()
+            if not line:
+                break
+            m = _json.loads(line)
+            if m.get("id") == 15 and "event" not in m and not m.get("ok"):
+                msg = m
+                break
+        report("排队中的编辑被取消返回 cancelled",
+               msg is not None and msg.get("cancelled") is True, str(msg))
+
+        # E2E 全流程：生成 → 编辑 → 导出 PNG/PDF/BOM → 历史 → 队列 → 设置
+        r = req(16, "generate", {"image_path": src, "grid_w": 30, "grid_h": 30,
+                                 "cell_size": 40, "show_finished": True})
+        chart = r["chart_path"]
+        r = req(17, "edit", {"image_path": src, "grid_w": 30, "grid_h": 30,
+                             "cell_size": 40, "overrides": [{"x": 5, "y": 5, "code": "H7"}]})
+        edited = r.get("chart_path")
+        report("E2E: 编辑生效返回新图纸", r.get("ok") and edited and edited != chart,
+               f"chart={chart} edited={edited}")
+
+        r = req(18, "export_png", {"source_path": edited,
+                                   "save_path": os.path.join(OUT_DIR, "e2e.png")})
+        report("E2E: 导出 PNG", r.get("ok") and os.path.isfile(r["save_path"]))
+        r = req(19, "export_pdf", {"source_path": edited,
+                                   "save_path": os.path.join(OUT_DIR, "e2e.pdf"),
+                                   "mode": "a4", "cell_size": 40,
+                                   "bom": req(16, "generate", {"image_path": src,
+                                                               "grid_w": 30, "grid_h": 30,
+                                                               "cell_size": 40})["color_stats"]})
+        report("E2E: 导出 PDF 含 BOM", r.get("ok") and os.path.isfile(r["save_path"]))
+        r = req(20, "export_bom", {"stats": {"H1": {"rgb": [1, 2, 3], "name": "测试",
+                                                   "count": 7, "code": "H1"}},
+                                   "save_path": os.path.join(OUT_DIR, "e2e.csv")})
+        report("E2E: 导出 BOM CSV", r.get("ok") and os.path.isfile(r["save_path"]))
+
+        r = req(21, "history", {"action": "add", "record": {
+            "image_path": src, "save_path": os.path.join(OUT_DIR, "e2e.png"),
+            "width": 30, "height": 30, "ratio": "按原图比例（宽为基准）", "cell_px": 40,
+            "show_grid": True, "grid_color": "#C8C8C8", "palette": "MARD 221 色",
+            "show_labels": True, "show_legend": False}})
+        r = req(22, "history", {"action": "list"})
+        found = [x for x in r["records"] if x.get("save_path", "").endswith("e2e.png")]
+        report("E2E: 历史 add/list 含 show_legend",
+               r.get("ok") and found and found[0].get("show_legend") is False,
+               str(found[:1]))
+        req(23, "history", {"action": "clear"})
+
+        req(24, "queue_save", {"items": [{"image_path": src, "width": 20, "height": 20,
+                                          "format": "PNG"}]})
+        r = req(25, "queue_load")
+        report("E2E: 队列保存/恢复", r.get("ok") and len(r["items"]) == 1)
+        req(26, "queue_save", {"items": []})
+
+        req(27, "settings_set", {"settings": {"cell_px": "64"}})
+        r = req(28, "settings_get")
+        report("E2E: 设置读写", r.get("settings", {}).get("cell_px") == "64")
+        req(29, "settings_set", {"settings": {"cell_px": "60"}})
+
+        # stdin 关闭 → 进程优雅退出（Swift 侧僵尸进程回归）
+        close()
+        report("stdin EOF 后引擎进程正常退出", server_proc.poll() is not None,
+               f"returncode={server_proc.returncode}")
+    finally:
+        if server_proc.poll() is None:
+            close()
+
+
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
     test_models()
@@ -941,6 +1217,7 @@ def main():
     test_core_server()
     test_effects()
     test_stage3()
+    test_robustness()
     print("\n=== 结果汇总 ===")
     print(f"通过: {RESULT['passed']}   失败: {RESULT['failed']}")
     if RESULT["errors"]:
