@@ -80,6 +80,13 @@ class PreviewPanel:
         self._finished = finished
         self._schedule_render(0)
 
+    def clear_images(self):
+        """清空图源引用（换图/撤销时在旧图 close 前调用，防渲染已关闭对象）"""
+        self._processed = None
+        self._finished = None
+        self.cancel_timer()
+        self._show_placeholder()
+
     @property
     def processed_image(self):
         return self._processed
@@ -96,10 +103,15 @@ class PreviewPanel:
     # ---------- 渲染 ----------
     def _schedule_render(self, delay=60):
         if self._render_timer:
-            self.frame.after_cancel(self._render_timer)
+            try:
+                self.frame.after_cancel(self._render_timer)
+            except tk.TclError:
+                pass
+            self._render_timer = None
         self._render_timer = self.frame.after(delay, self._render)
 
     def _render(self):
+        self._render_timer = None
         img = self._current_image()
         if img is None:
             self._show_placeholder()
@@ -107,25 +119,28 @@ class PreviewPanel:
         aw = self.canvas_frame.winfo_width()
         ah = self.canvas_frame.winfo_height()
 
-        if aw > 10 and ah > 10:
-            if self.fit_var.get():
-                scale = min(aw / img.width, ah / img.height)
-                nw = max(1, int(img.width * scale))
-                nh = max(1, int(img.height * scale))
+        try:
+            if aw > 10 and ah > 10:
+                if self.fit_var.get():
+                    scale = min(aw / img.width, ah / img.height)
+                    nw = max(1, int(img.width * scale))
+                    nh = max(1, int(img.height * scale))
+                else:
+                    pct = self.zoom_var.get() / 100.0
+                    nw = max(1, int(img.width * pct))
+                    nh = max(1, int(img.height * pct))
             else:
-                pct = self.zoom_var.get() / 100.0
-                nw = max(1, int(img.width * pct))
-                nh = max(1, int(img.height * pct))
-        else:
-            nw, nh = img.width, img.height
+                nw, nh = img.width, img.height
 
-        if nw > MAX_RENDER_DIM or nh > MAX_RENDER_DIM:
-            s = min(MAX_RENDER_DIM / nw, MAX_RENDER_DIM / nh)
-            nw = max(1, int(nw * s))
-            nh = max(1, int(nh * s))
+            if nw > MAX_RENDER_DIM or nh > MAX_RENDER_DIM:
+                s = min(MAX_RENDER_DIM / nw, MAX_RENDER_DIM / nh)
+                nw = max(1, int(nw * s))
+                nh = max(1, int(nh * s))
 
-        display = img.resize((nw, nh), Image.NEAREST)
-        self._set_photo(display)
+            display = img.resize((nw, nh), Image.NEAREST)
+            self._set_photo(display)
+        except (ValueError, OSError):
+            self._show_placeholder()
 
     def _set_photo(self, img):
         old = self.photo_ref
@@ -192,7 +207,16 @@ class PreviewPanel:
         if self._processed is None:
             return
         if self.fit_var.get():
+            # 从当前实际显示比例起算，避免跳变
+            img = self._current_image()
+            try:
+                aw = self.canvas_frame.winfo_width()
+                ah = self.canvas_frame.winfo_height()
+                current = int(min(aw / img.width, ah / img.height) * 100)
+            except (ValueError, OSError, ZeroDivisionError):
+                current = 100
             self.fit_var.set(False)
+            self.zoom_var.set(max(25, min(400, current)))
         new_zoom = max(25, min(400, self.zoom_var.get() + delta_pct))
         self.zoom_var.set(new_zoom)
         self.lbl_zoom_val.config(text=f"{new_zoom}%")

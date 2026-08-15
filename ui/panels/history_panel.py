@@ -1,6 +1,6 @@
 # ui/panels/history_panel.py - 历史记录面板
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 
 class HistoryPanel:
@@ -20,7 +20,6 @@ class HistoryPanel:
 
         self.list_history = tk.Listbox(parent, height=6)
         self.list_history.pack(fill=tk.X, pady=5)
-        self.list_history.bind("<<ListboxSelect>>", self._on_select)
 
         frame_action = ttk.Frame(parent)
         frame_action.pack(fill=tk.X, pady=5)
@@ -30,11 +29,6 @@ class HistoryPanel:
                    command=on_delete).pack(side=tk.LEFT, padx=2)
 
         self._records = []
-        self._on_select_cb = on_load
-
-    def _on_select(self, _event=None):
-        if self._on_select_cb:
-            self._on_select_cb()
 
     def refresh(self, records=None):
         if records is not None:

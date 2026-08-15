@@ -1,5 +1,5 @@
-# ui/state.py - 应用状态中枢（模型 + 撤销栈 + 变更通知）
-from typing import Callable, List, Optional
+# ui/state.py - 应用状态中枢（模型 + 撤销栈）
+from typing import List, Optional
 
 from core.models import GenerateParams, UndoSnapshot
 
@@ -9,14 +9,13 @@ class AppState:
 
     - 参数快照（GenerateParams）为唯一事实来源，面板通过 apply_params/current_params 同步
     - 图片与结果集中管理（负责旧图 close，防内存泄漏）
-    - 撤销栈为结构化 UndoSnapshot
-    - 通过 emit() 通知控制器（事件名：'params' / 'result' / 'image'）
+    - 撤销栈为结构化 UndoSnapshot（与当前状态相同不入栈，防无意义快照污染）
     """
 
-    def __init__(self, store, initial_params: GenerateParams):
+    def __init__(self, store, initial_params: GenerateParams, settings=None):
         self.store = store
         self.params = initial_params
-        self.settings = store.load_settings()
+        self.settings = settings if settings is not None else store.load_settings()
 
         self.selected_file: Optional[str] = None
         self.original_image = None
@@ -29,25 +28,17 @@ class AppState:
         self.previous_states: List[UndoSnapshot] = []
         self.max_undo_steps = 10
 
-        self._listeners: List[Callable[[str], None]] = []
-
-    # ---------- 观察者 ----------
-    def on_change(self, fn):
-        self._listeners.append(fn)
-
-    def emit(self, event: str):
-        for fn in self._listeners:
-            fn(event)
-
     # ---------- 参数 ----------
     def set_params(self, params: GenerateParams):
         self.params = params
-        self.emit('params')
 
     # ---------- 撤销 ----------
     def save_state(self):
-        self.previous_states.append(
-            UndoSnapshot(params=self.params, selected_file=self.selected_file))
+        snapshot = UndoSnapshot(params=self.params, selected_file=self.selected_file)
+        # 与栈顶相同则跳过：防 FocusOut/KeyRelease 重复触发污染撤销栈
+        if self.previous_states and self.previous_states[-1] == snapshot:
+            return
+        self.previous_states.append(snapshot)
         if len(self.previous_states) > self.max_undo_steps:
             self.previous_states.pop(0)
 
@@ -72,7 +63,6 @@ class AppState:
                 old.close()
             except Exception:
                 pass
-        self.emit('image')
 
     def replace_processed_image(self, new_img, new_finished=None):
         old = self.processed_image

@@ -29,6 +29,7 @@ def apply_theme(root):
     style.configure("Status.Busy.TLabel", foreground=ACCENT)
     style.configure("Status.Warn.TLabel", foreground="#d97706")
     style.configure("Status.Err.TLabel", foreground="#d1242f")
+    style.configure("Accent.TButton", foreground="white")
 
     if is_mac():
         return

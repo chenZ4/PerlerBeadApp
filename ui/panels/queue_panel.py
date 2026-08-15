@@ -59,9 +59,8 @@ class QueuePanel:
         self.lbl_queue_status = ttk.Label(parent, text="队列为空", foreground="gray")
         self.lbl_queue_status.pack(anchor=tk.W)
 
-        self._thumbs = []
         self._thumb_cache = {}
-        self._thumb_paths = []
+        self._thumb_max = 200
 
     def _make_thumb(self, path):
         if path in self._thumb_cache:
@@ -72,20 +71,19 @@ class QueuePanel:
             img.thumbnail((48, 48))
             photo = ImageTk.PhotoImage(img)
             img.close()
-            self._thumb_cache[path] = photo
-            return photo
         except Exception:
             return None
+        self._thumb_cache[path] = photo
+        while len(self._thumb_cache) > self._thumb_max:
+            oldest = next(iter(self._thumb_cache))
+            self._thumb_cache.pop(oldest, None)
+        return photo
 
     def refresh(self, items):
         """items: list[QueueItem]"""
         self.queue_tree.delete(*self.queue_tree.get_children())
-        self._thumbs = []
-        self._thumb_paths = []
         for item in items:
             thumb = self._make_thumb(item.image_path)
-            self._thumbs.append(thumb)
-            self._thumb_paths.append(item.image_path)
             info = f"[{item.fmt}] {item.params.grid_w}x{item.params.grid_h}"
             self.queue_tree.insert("", tk.END, text=os.path.basename(item.image_path),
                                    values=(thumb, info))

@@ -10,7 +10,11 @@ from PIL import Image
 from core.history_manager import HistoryManager
 from core.models import (
     BIG_GRID_WARN,
+    DEFAULT_CELL_PX,
+    DEFAULT_GRID_COLOR,
+    DEFAULT_PALETTE,
     RATIO_ORIGINAL,
+    BatchResult,
     GenerateParams,
     QueueItem,
 )
@@ -28,12 +32,12 @@ def _params_from_settings(settings):
     """设置 dict → GenerateParams（启动时初始化）"""
     return GenerateParams(
         ratio=settings.get('ratio', RATIO_ORIGINAL),
-        palette=settings.get('palette', 'MARD 221 色'),
-        cell_px=int(settings.get('cell_px', '60') or 60),
+        palette=settings.get('palette', DEFAULT_PALETTE),
+        cell_px=int(settings.get('cell_px', str(DEFAULT_CELL_PX)) or DEFAULT_CELL_PX),
         show_grid=bool(settings.get('show_grid', True)),
         show_labels=bool(settings.get('show_labels', True)),
         show_legend=bool(settings.get('show_legend', True)),
-        grid_color=settings.get('grid_color', '#C8C8C8'),
+        grid_color=settings.get('grid_color', DEFAULT_GRID_COLOR),
     )
 
 
@@ -50,7 +54,8 @@ class AppController:
 
         # ---- 依赖装配 ----
         self.store = SettingsStore()
-        self.state = AppState(self.store, _params_from_settings(self.store.load_settings()))
+        settings = self.store.load_settings()
+        self.state = AppState(self.store, _params_from_settings(settings), settings)
         self.history_mgr = HistoryManager()
         self.chart_service = ChartService(ImageProcessor())
         self.batch_service = BatchService(self.chart_service.processor, self.history_mgr)
@@ -124,8 +129,8 @@ class AppController:
             on_enqueue=self.enqueue_item, on_remove=self.remove_selected_queue,
             on_clear=self.clear_queue, on_start=self.process_queue,
             on_cancel=self._cancel_queue)
-        self.queue_panel.refresh(self.store.load_queue())
         self.queue_items = self.store.load_queue()
+        self.queue_panel.refresh(self.queue_items)
 
         self.stats_panel = StatsPanel(scroll_frame)
         self.history_panel = HistoryPanel(
@@ -203,7 +208,20 @@ class AppController:
     # 设置面板事件
     # ================================================================
     def _on_settings_wheel(self, event):
-        if not str(event.widget).startswith(str(self._settings_canvas)):
+        widget = getattr(event, "widget", None)
+        if not isinstance(widget, tk.Widget):
+            return
+        try:
+            if widget.winfo_toplevel() is not self.root:
+                return
+        except tk.TclError:
+            return
+        w = widget
+        while w is not None and w is not self.root:
+            if w is self._settings_canvas:
+                break
+            w = w.master
+        else:
             return
         if is_mac():
             step = int(-event.delta)
@@ -213,6 +231,8 @@ class AppController:
 
     def _on_dimension_change(self, source):
         if self.is_calculating:
+            return
+        if self.settings_panel.current_params() == self.state.params:
             return
         self.is_calculating = True
         try:
@@ -224,11 +244,17 @@ class AppController:
         self._trigger_preview()
 
     def _on_ratio_change(self):
+        if self.settings_panel.current_params() == self.state.params:
+            return
         self.state.save_state()
         self._trigger_preview()
 
-    def _on_setting_change(self):
-        self.state.save_state()
+    def _on_setting_change(self, save=True):
+        changed = self.settings_panel.current_params() != self.state.params
+        if not changed:
+            return
+        if save:
+            self.state.save_state()
         self.settings_panel.update_cm_hint()
         self.settings_panel.update_palette_info()
         self._trigger_preview()
@@ -238,7 +264,11 @@ class AppController:
             self._pending_regenerate = True
             return
         if self.preview_timer:
-            self.root.after_cancel(self.preview_timer)
+            try:
+                self.root.after_cancel(self.preview_timer)
+            except tk.TclError:
+                pass
+            self.preview_timer = None
 
         def fire():
             self.preview_timer = None
@@ -270,6 +300,7 @@ class AppController:
         self._sync_params_from_panel()
         self.state.replace_original_image(img)
         self.state.selected_file = file_path
+        self.preview_panel.clear_images()
         self.state.reset_result()
         self.settings_panel.lbl_file.config(
             text=os.path.basename(file_path), foreground="black")
@@ -290,11 +321,8 @@ class AppController:
     # ================================================================
     # 生成 / 预览
     # ================================================================
-    def _generate_chart(self, params=None, show_finished=True, cancel_callback=None):
-        params = params or self.state.params
-        return self.chart_service.generate(
-            self.state.selected_file, params,
-            show_finished=show_finished, cancel_callback=cancel_callback)
+    def _generate_chart(self):
+        return self.chart_service.generate(self.state.selected_file, self.state.params)
 
     def generate_preview(self, confirm_big=False):
         if self.is_processing:
@@ -377,9 +405,9 @@ class AppController:
             self.chart_service.save_chart(result, save_path)
             self._apply_result(result)
             self.history_mgr.add_record(self.state.selected_file, save_path,
-                                        p.grid_w, p.grid_h, p.ratio, p.cell_px,
+                                        result.grid_w, result.grid_h, p.ratio, p.cell_px,
                                         p.show_grid, p.grid_color, p.palette,
-                                        p.show_labels)
+                                        p.show_labels, p.show_legend)
             self.refresh_history_list()
 
             file_size = os.path.getsize(save_path) / 1024
@@ -393,6 +421,10 @@ class AppController:
                 return
             self.preview_panel.lbl_status.config(
                 text="💾 已保存到历史记录", style="Status.OK.TLabel")
+        except Exception as e:
+            messagebox.showerror("保存失败", str(e))
+            self.preview_panel.lbl_status.config(
+                text=f"❌ 保存失败：{e}", style="Status.Err.TLabel")
         finally:
             self.is_processing = False
 
@@ -434,6 +466,10 @@ class AppController:
                 f"文件大小：{file_size:.1f} KB", save_path)
             if self._closing:
                 return
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e))
+            self.preview_panel.lbl_status.config(
+                text=f"❌ 导出失败：{e}", style="Status.Err.TLabel")
         finally:
             self.is_processing = False
 
@@ -611,20 +647,30 @@ class AppController:
                 f"⏳ 处理中 {done}/{total}：{os.path.basename(out_path)}")
             self.root.update()
 
+        result = BatchResult()
+        error = None
         try:
             result = self.batch_service.process(
                 items, out_dir,
                 on_progress=on_progress,
                 is_cancelled=lambda: self._queue_cancel)
+        except Exception as e:
+            error = e
         finally:
             self.refresh_history_list()
-            self.queue_panel.set_progress(
-                min(len(result.success) + len(result.failed), total)
-                if result.cancelled else total)
+            if error is None:
+                self.queue_panel.set_progress(
+                    min(len(result.success) + len(result.failed), total)
+                    if result.cancelled else total)
             self.queue_panel.btn_queue_start.config(state=tk.NORMAL)
             self.queue_panel.btn_queue_cancel.config(state=tk.DISABLED)
             self.is_processing = False
             self._queue_cancel = False
+
+        if error is not None:
+            self.queue_panel.set_status("❌ 批量处理出错", foreground="#d1242f")
+            messagebox.showerror("批量处理失败", str(error))
+            return
 
         success = result.success
         failed = result.failed
@@ -664,26 +710,33 @@ class AppController:
         record = self.history_mgr.get_record(index)
         if not record:
             return
-        if not os.path.exists(record.get('image_path', '')):
+        image_path = record.get('image_path') or ''
+        if not image_path or not os.path.exists(image_path):
             messagebox.showerror("错误", "原图片已不存在")
             return
 
-        self.state.save_state()
-        self.state.selected_file = record['image_path']
-        self.settings_panel.lbl_file.config(
-            text=os.path.basename(record['image_path']), foreground="black")
-        params = GenerateParams.from_dict(record)
-        self.settings_panel.apply_params(params)
-        self._sync_params_from_panel()
         try:
-            img = Image.open(record['image_path'])
-            img.load()
-            self.state.replace_original_image(img)
-        except Exception:
-            self.state.replace_original_image(None)
-        self.preview_panel.lbl_status.config(
-            text=f"📋 已加载历史 [{index}]，自动生成预览...", style="Status.Busy.TLabel")
-        self.generate_preview()
+            self.state.save_state()
+            self.state.selected_file = image_path
+            self.settings_panel.lbl_file.config(
+                text=os.path.basename(image_path), foreground="black")
+            params = GenerateParams.from_dict(record)
+            self.settings_panel.apply_params(params)
+            self._sync_params_from_panel()
+            try:
+                img = Image.open(image_path)
+                img.load()
+                self.state.replace_original_image(img)
+            except Exception:
+                self.state.replace_original_image(None)
+            self.preview_panel.clear_images()
+            self.state.reset_result()
+            self.preview_panel.lbl_status.config(
+                text=f"📋 已加载历史 [{index}]，自动生成预览...", style="Status.Busy.TLabel")
+            self.generate_preview()
+        except Exception as e:
+            self.preview_panel.lbl_status.config(
+                text=f"❌ 加载历史失败：{e}", style="Status.Err.TLabel")
 
     def delete_selected_history(self):
         index = self.history_panel.selection_index()
@@ -710,8 +763,12 @@ class AppController:
         if self.color_chart_window is None or not self.color_chart_window.window.winfo_exists():
             from ui.color_chart_ui import ColorChartWindow
             from core.colors import display_to_internal
-            self.color_chart_window = ColorChartWindow(
-                self.root, palette_name=display_to_internal(self.state.params.palette))
+            try:
+                self.color_chart_window = ColorChartWindow(
+                    self.root, palette_name=display_to_internal(self.state.params.palette))
+            except Exception as e:
+                messagebox.showerror("色卡打开失败", str(e))
+                return
             self.color_chart_window.window.bind("<Destroy>", self._on_color_chart_destroy)
         else:
             self.color_chart_window.window.focus_force()
@@ -782,4 +839,12 @@ class AppController:
         self._closing = True
         self._sync_params_from_panel()
         self.state.persist_settings(self.root.winfo_width(), self.root.winfo_height())
+        try:
+            if self.preview_timer:
+                self.root.after_cancel(self.preview_timer)
+                self.preview_timer = None
+            self.preview_panel.cancel_timer()
+            self.root.unbind_all("<MouseWheel>")
+        except (tk.TclError, AttributeError):
+            pass
         self.root.destroy()

@@ -1,8 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import Image
 from core.colors import get_palette, PALETTE_OPTIONS
 from ui.fonts import is_mac, ui_font, mono_font
+from ui.theme import ACCENT
 
 
 class ColorChartWindow:
@@ -34,6 +34,7 @@ class ColorChartWindow:
         self._load_completed = False
         self._last_cols = 0
         self._search_timer = None
+        self._status_timer = None
 
         self._setup_ui()
         self._load_colors()
@@ -41,6 +42,15 @@ class ColorChartWindow:
         self._last_cols = self._calculate_cols()
 
     def _on_close(self):
+        try:
+            if self._search_timer:
+                self.window.after_cancel(self._search_timer)
+                self._search_timer = None
+            if self._status_timer:
+                self.window.after_cancel(self._status_timer)
+                self._status_timer = None
+        except tk.TclError:
+            pass
         try:
             self.window.grab_release()
         except tk.TclError:
@@ -69,7 +79,7 @@ class ColorChartWindow:
         title_frame.pack(side=tk.LEFT)
 
         ttk.Label(title_frame, text=f"🎨 {self._get_palette_display_name()}",
-                  font=ui_font(16, bold=True), foreground="#0078D4").pack(anchor=tk.W)
+                  font=ui_font(16, bold=True), foreground=ACCENT).pack(anchor=tk.W)
 
         self.lbl_stats = ttk.Label(title_frame, text="", font=ui_font(10), foreground="#666")
         self.lbl_stats.pack(anchor=tk.W, pady=(5, 0))
@@ -163,12 +173,13 @@ class ColorChartWindow:
             colors_data = []
             for i, (rgb, name, code) in enumerate(zip(self.palette.colors, self.palette.names, self.palette.codes)):
                 hex_val = self.palette.hex_codes[i]
+                code_text = str(code).strip()
                 colors_data.append({
-                    'code': code.strip(),
-                    'name': name.strip() if name.strip() else '',
+                    'code': code_text,
+                    'name': str(name).strip() if str(name).strip() else '',
                     'rgb': rgb,
                     'hex': hex_val.lower(),
-                    'group': code.strip()[0]
+                    'group': code_text[:1] or '#'
                 })
 
             if filter_text:
@@ -198,7 +209,7 @@ class ColorChartWindow:
         header.pack(fill=tk.X)
 
         toggle_btn = ttk.Label(header, text="▼" if self.group_expanded.get(group_name, True) else "▶",
-                               font=ui_font(11), cursor="hand2", foreground="#0078D4")
+                               font=ui_font(11), cursor="hand2", foreground=ACCENT)
         toggle_btn.pack(side=tk.LEFT)
         toggle_btn.bind("<Button-1>", lambda e: self._toggle_group(group_name))
 
@@ -254,7 +265,7 @@ class ColorChartWindow:
 
         rgb_text = f"RGB({color_info['rgb'][0]}, {color_info['rgb'][1]}, {color_info['rgb'][2]})"
         rgb_label = tk.Label(info_frame, text=rgb_text, font=mono_font(10),
-                             fg="#0078D4", bg="#FFFFFF", anchor=tk.W)
+                             fg=ACCENT, bg="#FFFFFF", anchor=tk.W)
         rgb_label.pack(fill=tk.X, pady=(3, 0))
 
         hex_label = tk.Label(info_frame, text=color_info['hex'].lower(),
@@ -300,7 +311,10 @@ class ColorChartWindow:
 
     def _on_search(self, event=None):
         if self._search_timer:
-            self.window.after_cancel(self._search_timer)
+            try:
+                self.window.after_cancel(self._search_timer)
+            except tk.TclError:
+                pass
         self._search_timer = self.window.after(250, self._do_search)
 
     def _do_search(self):
@@ -311,7 +325,11 @@ class ColorChartWindow:
         self.search_var.set("")
         self.current_filter = ""
         if self._search_timer:
-            self.window.after_cancel(self._search_timer)
+            try:
+                self.window.after_cancel(self._search_timer)
+            except tk.TclError:
+                pass
+            self._search_timer = None
         self._load_colors()
 
     def _on_palette_change(self, event=None):
@@ -337,10 +355,23 @@ class ColorChartWindow:
             self.window.clipboard_clear()
             self.window.clipboard_append(text)
             self.status_label.config(text=f"✓ 已复制：{color_info['code']}", foreground="#28a745")
-            self.window.after(2000, lambda: self.status_label.config(
-                text=f"✓ 显示 {len(self.filtered_colors)}/{len(self.palette.colors)} 种颜色", foreground="#666"))
+            if self._status_timer:
+                try:
+                    self.window.after_cancel(self._status_timer)
+                except tk.TclError:
+                    pass
+            self._status_timer = self.window.after(2000, self._reset_status_text)
         except Exception as e:
             messagebox.showerror("错误", f"复制失败：{e}")
+
+    def _reset_status_text(self):
+        self._status_timer = None
+        try:
+            self.status_label.config(
+                text=f"✓ 显示 {len(self.filtered_colors)}/{len(self.palette.colors)} 种颜色",
+                foreground="#666")
+        except tk.TclError:
+            pass
 
     def _export_csv(self):
         from tkinter import filedialog
@@ -353,11 +384,13 @@ class ColorChartWindow:
                                                  title="导出颜色数据")
         if save_path:
             try:
-                with open(save_path, 'w', encoding='utf-8-sig') as f:
-                    f.write("色号，颜色名称，R,G,B,HEX\n")
+                import csv
+                with open(save_path, 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["色号", "颜色名称", "R", "G", "B", "HEX"])
                     for c in self.filtered_colors:
                         r, g, b = c['rgb']
-                        f.write(f"{c['code']},{c['name']},{r},{g},{b},{c['hex'].lower()}\n")
+                        writer.writerow([c['code'], c['name'], r, g, b, c['hex'].lower()])
                 messagebox.showinfo("✓ 导出成功", f"已保存至:\n{save_path}")
             except Exception as e:
                 messagebox.showerror("❌ 导出失败", str(e))

@@ -4,16 +4,22 @@ from tkinter import ttk
 
 from core.colors import PALETTE_OPTIONS
 from core.models import (
+    DEFAULT_CELL_PX,
+    DEFAULT_GRID,
     DEFAULT_GRID_COLOR,
+    DEFAULT_PALETTE,
     RATIOS,
     GenerateParams,
+    cm_hint,
     link_dimensions,
     parse_cell_px,
     parse_grid_h,
     parse_grid_w,
 )
+from ui.theme import ACCENT
 
 CELL_PX_OPTIONS = ["32", "40", "48", "60", "80", "96"]
+_PALETTE_DISPLAYS = [d for d, _ in PALETTE_OPTIONS]
 
 
 class SettingsPanel:
@@ -30,7 +36,7 @@ class SettingsPanel:
 
         self._on_dimension_change = on_dimension_change
         self._on_ratio_cb = lambda: None
-        self._setting_cb = lambda: None
+        self._setting_cb = lambda save=True: None
         self._is_calculating = False
 
         # ===== 1. 图片源 =====
@@ -57,14 +63,14 @@ class SettingsPanel:
 
         ttk.Label(frame_wh, text="宽 (颗):").grid(row=0, column=0, padx=5, sticky=tk.W)
         self.entry_w = ttk.Entry(frame_wh, width=8)
-        self.entry_w.insert(0, "50")
+        self.entry_w.insert(0, str(DEFAULT_GRID))
         self.entry_w.grid(row=0, column=1, padx=5)
         self.entry_w.bind("<Return>", lambda e: self._on_enter('w'))
         self.entry_w.bind("<FocusOut>", lambda e: self._notify_dimension('w'))
 
         ttk.Label(frame_wh, text="高 (颗):").grid(row=0, column=2, padx=5, sticky=tk.W)
         self.entry_h = ttk.Entry(frame_wh, width=8)
-        self.entry_h.insert(0, "50")
+        self.entry_h.insert(0, str(DEFAULT_GRID))
         self.entry_h.grid(row=0, column=3, padx=5)
         self.entry_h.bind("<Return>", lambda e: self._on_enter('h'))
         self.entry_h.bind("<FocusOut>", lambda e: self._notify_dimension('h'))
@@ -75,13 +81,13 @@ class SettingsPanel:
         # ===== 3. 色卡选择 =====
         section_title(parent, "🎨 色卡选择")
         ttk.Label(parent, text="色卡方案:").pack(anchor=tk.W)
-        self.palette_var = tk.StringVar(value=settings.get('palette', 'MARD 221 色'))
+        self.palette_var = tk.StringVar(value=settings.get('palette', DEFAULT_PALETTE))
         self.combo_palette = ttk.Combobox(
             parent, textvariable=self.palette_var,
             values=[name for name, _ in PALETTE_OPTIONS], state="readonly")
         self.combo_palette.pack(fill=tk.X, pady=5)
         self.combo_palette.bind("<<ComboboxSelected>>", self._on_setting_picked)
-        self.lbl_palette_info = ttk.Label(parent, text="", foreground="#0078D4")
+        self.lbl_palette_info = ttk.Label(parent, text="", foreground=ACCENT)
         self.lbl_palette_info.pack(anchor=tk.W, pady=5)
         ttk.Button(parent, text="🎨 查看色卡",
                    command=on_open_color_chart).pack(fill=tk.X, pady=5)
@@ -91,7 +97,8 @@ class SettingsPanel:
         frame_cell = ttk.Frame(parent)
         frame_cell.pack(fill=tk.X, pady=5)
         ttk.Label(frame_cell, text="每格像素:").pack(side=tk.LEFT)
-        self.cell_px_var = tk.StringVar(value=settings.get('cell_px', '60'))
+        self.cell_px_var = tk.StringVar(
+            value=settings.get('cell_px', str(DEFAULT_CELL_PX)))
         self.combo_cell_px = ttk.Combobox(frame_cell, textvariable=self.cell_px_var,
                                           values=CELL_PX_OPTIONS, width=8)
         self.combo_cell_px.pack(side=tk.LEFT, padx=10)
@@ -116,7 +123,7 @@ class SettingsPanel:
         self.grid_color_var = tk.StringVar(value=settings.get('grid_color', DEFAULT_GRID_COLOR))
         self.entry_grid_color = ttk.Entry(frame_color, textvariable=self.grid_color_var, width=12)
         self.entry_grid_color.pack(side=tk.LEFT, padx=10)
-        self.entry_grid_color.bind("<KeyRelease>", lambda e: self._notify_setting())
+        self.entry_grid_color.bind("<KeyRelease>", lambda e: self._notify_setting(save=False))
         self.entry_grid_color.bind("<FocusOut>", self._on_setting_picked)
 
     # ---------- 事件转发 ----------
@@ -128,10 +135,10 @@ class SettingsPanel:
         self._on_ratio_cb = cb
 
     def _on_setting_picked(self, _event=None):
-        self._notify_setting()
+        self._notify_setting(save=True)
 
-    def _notify_setting(self):
-        self._setting_cb()
+    def _notify_setting(self, save=True):
+        self._setting_cb(save)
 
     def set_on_setting_change(self, cb):
         self._setting_cb = cb
@@ -141,10 +148,7 @@ class SettingsPanel:
             self._on_dimension_change(source)
 
     def _on_enter(self, source):
-        self.link_from(source)
-        self.update_cm_hint()
-        if self._on_dimension_change:
-            self._on_dimension_change(source)
+        self._notify_dimension(source)
 
     # ---------- 字段联动 ----------
     def link_from(self, source):
@@ -172,7 +176,7 @@ class SettingsPanel:
             h = int(self.entry_h.get().strip())
             if w < 1 or h < 1:
                 raise ValueError
-            self.lbl_cm_hint.config(text=f"成品约 {w * 0.5:.0f} × {h * 0.5:.0f} cm（每颗 5mm）")
+            self.lbl_cm_hint.config(text=cm_hint(w, h))
         except (TypeError, ValueError):
             self.lbl_cm_hint.config(text="")
 
@@ -201,7 +205,7 @@ class SettingsPanel:
         self.show_labels_var.set(params.show_labels)
         self.show_legend_var.set(params.show_legend)
         self.grid_color_var.set(params.grid_color)
-        if params.palette in [d for d, _ in PALETTE_OPTIONS]:
+        if params.palette in _PALETTE_DISPLAYS:
             self.palette_var.set(params.palette)
         self.update_palette_info()
         self.update_cm_hint()
