@@ -372,3 +372,6 @@ queue_state.json
 app/.build/
 track/
 app/.swiftpm/
+
+# 打包产物（.app / zip / 图标）
+dist/

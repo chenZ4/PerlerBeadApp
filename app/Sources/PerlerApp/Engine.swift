@@ -40,6 +40,12 @@ final class Engine {
     var onEngineExit: (() -> Void)?
 
     static var engineScript: String {
+        // 打包后的 .app 优先用包内引擎（Contents/Resources/engine/core_server.py）
+        if let bundled = Bundle.main.resourceURL?
+            .appendingPathComponent("engine/core_server.py").path,
+           FileManager.default.fileExists(atPath: bundled) {
+            return bundled
+        }
         let dir = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
