@@ -59,29 +59,19 @@ struct ColorStat: Decodable {
     }
 }
 
-struct PaletteInfo: Decodable {
+struct PaletteInfo {
     let display: String
     let internalName: String
     let count: Int
-
-    enum CodingKeys: String, CodingKey { case display, count, internalName = "internal" }
 
     init(display: String, count: Int, internalName: String) {
         self.display = display
         self.count = count
         self.internalName = internalName
     }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        display = try c.decodeIfPresent(String.self, forKey: .display) ?? ""
-        count = try c.decodeIfPresent(Int.self, forKey: .count) ?? 0
-        internalName = try c.decodeIfPresent(String.self, forKey: .internalName)
-            ?? display
-    }
 }
 
-struct TemplateInfo: Decodable {
+struct TemplateInfo {
     let id: String
     let name: String
     let width: Int

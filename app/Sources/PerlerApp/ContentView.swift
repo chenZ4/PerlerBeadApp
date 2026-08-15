@@ -203,7 +203,6 @@ struct ContentView: View {
                 .resizable()
                 .interpolation(.none)
                 .frame(width: size.width, height: size.height)
-                .offset(vm.offset)
                 .position(x: geo.size.width / 2 + vm.offset.width,
                           y: geo.size.height / 2 + vm.offset.height)
                 .onAppear { vm.previewGeo = geo.size }
@@ -242,7 +241,7 @@ struct ContentView: View {
 
     private func chooseImage() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg, .webP]
+        panel.allowedContentTypes = [.png, .jpeg, .webP, .gif, .bmp]
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             vm.setImagePath(url.path)

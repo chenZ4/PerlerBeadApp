@@ -26,12 +26,12 @@ final class Engine {
     private let outPipe = Pipe()
     private let inPipe = Pipe()
     private let errPipe = Pipe()
-    private var buffer = ""
+    private var dataBuffer = Data()
     private var pending: [Int: (onProgress: ((Double) -> Void)?,
                                 completion: (Result<[String: Any], Error>) -> Void)] = [:]
     private var nextID = 1
-    private let syncQueue = DispatchQueue(label: "engine.sync")
     private let readQueue = DispatchQueue(label: "engine.read")
+    private let errorQueue = DispatchQueue(label: "engine.error")
     private let lock = NSLock()
     private var lastError = ""
     private var engineExited = false
@@ -64,11 +64,11 @@ final class Engine {
         return nil
     }
 
-    init?(pythonPath: String) {
+    init?(pythonPath: String, scriptPath: String = Engine.engineScript) {
         guard FileManager.default.isExecutableFile(atPath: pythonPath) else { return nil }
         process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [Engine.engineScript]
+        process.arguments = [scriptPath]
         process.standardOutput = outPipe
         process.standardInput = inPipe
         process.standardError = errPipe
@@ -80,7 +80,9 @@ final class Engine {
         readQueue.async { [weak self] in
             self?.readLoop()
         }
-        readQueue.async { [weak self] in
+        // stderr 用独立队列读取：readLoop 阻塞在 stdout 管道上，串行队列会让
+        // stderr 永不 drain，管道写满后引擎假死
+        errorQueue.async { [weak self] in
             self?.readErrorLoop()
         }
     }
@@ -106,8 +108,15 @@ final class Engine {
                  onStart: ((Int) -> Void)? = nil,
                  timeout: TimeInterval = 15,
                  completion: @escaping (Result<[String: Any], Error>) -> Void) {
-        let rid = requestID ?? nextID
-        if requestID == nil { nextID += 1 }
+        let rid: Int
+        if let requestID {
+            rid = requestID
+        } else {
+            lock.lock()
+            rid = nextID
+            nextID += 1
+            lock.unlock()
+        }
 
         // F0: 所有回调强制主线程（@MainActor 状态安全）
         let mainCompletion: (Result<[String: Any], Error>) -> Void = { result in
@@ -132,7 +141,7 @@ final class Engine {
         pending[rid] = (mainProgress, mainCompletion)
         lock.unlock()
 
-        // F3: 超时保护（15s），回调已保证主线程
+        // F3: 超时保护，回调已保证主线程
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
             guard let self else { return }
             self.lock.lock()
@@ -166,19 +175,36 @@ final class Engine {
         }
     }
 
+    /// 取消指定请求：发送 cancel 指令并移除 pending 条目（晚到的结果/事件被忽略）
+    func cancel(requestID: Int) {
+        lock.lock()
+        pending.removeValue(forKey: requestID)
+        lock.unlock()
+        guard let data = try? JSONSerialization.data(withJSONObject: ["id": requestID, "op": "cancel"]),
+              let line = String(data: data, encoding: .utf8) else { return }
+        try? inPipe.fileHandleForWriting.write(contentsOf: (line + "\n").data(using: .utf8)!)
+    }
+
     private func readLoop() {
         let handle = outPipe.fileHandleForReading
         while true {
             let data = handle.availableData
             if data.isEmpty { break }
-            guard let chunk = String(data: data, encoding: .utf8) else { continue }
-            buffer += chunk
-            while let nl = buffer.firstIndex(of: "\n") {
-                let line = String(buffer[..<nl])
-                buffer.removeSubrange(...nl)
-                guard !line.isEmpty else { continue }
+            // 先按字节累积再按 \n 切行，最后整行解码 UTF-8：
+            // 逐块解码会在多字节字符跨块时丢字节，导致含中文的响应被静默吞掉
+            dataBuffer.append(data)
+            while let nl = dataBuffer.firstIndex(of: 0x0A) {
+                let lineData = dataBuffer[..<nl]
+                dataBuffer.removeSubrange(...nl)
+                guard let line = String(data: lineData, encoding: .utf8), !line.isEmpty else { continue }
                 handleLine(line)
             }
+        }
+        if !dataBuffer.isEmpty {
+            if let line = String(data: dataBuffer, encoding: .utf8), !line.isEmpty {
+                handleLine(line)
+            }
+            dataBuffer.removeAll(keepingCapacity: false)
         }
         // F1: 引擎进程退出（EOF）→ 全部 pending 快速失败 + 退出回调
         failAllPending(EngineError.serverError("引擎已退出"))

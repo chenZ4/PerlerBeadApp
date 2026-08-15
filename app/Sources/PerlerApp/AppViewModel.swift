@@ -15,7 +15,7 @@ final class AppViewModel: ObservableObject {
     /// R4: 取消当前生成/编辑请求（rid 未就绪时也立即复位 UI）
     func cancelActive() {
         if let eng = engine, let rid = activeRequestID {
-            eng.request(op: "cancel", params: [:], requestID: rid) { _ in }
+            eng.cancel(requestID: rid)
         }
         isBusy = false
         progress = -1
@@ -197,13 +197,16 @@ final class AppViewModel: ObservableObject {
         }
         engine = eng
         // F1/F4: 引擎异常退出 → 状态栏显示退出与日志
-        eng.onEngineExit = { [weak self] in
+        // 注意 weak 捕获 eng：闭包由 eng 持有，强捕获 eng 会形成引用循环，
+        // 导致 Engine.deinit 的 process.terminate() 永不执行（僵尸进程）
+        eng.onEngineExit = { [weak self, weak eng] in
             guard let self else { return }
-            let log = eng.engineErrorLog
+            let log = eng?.engineErrorLog ?? ""
             let tail = String(log.suffix(200))
             self.statusText = "引擎已退出\(tail.isEmpty ? "" : "：\(tail)")"
             self.isBusy = false
             self.progress = -1
+            self.activeRequestID = nil
         }
         // F4: ping 5s 超时
         eng.ping { [weak self] result in
@@ -349,11 +352,12 @@ final class AppViewModel: ObservableObject {
         ]
         eng.request(op: "generate", params: params,
                     onProgress: { [weak self] p in
-                        Task { @MainActor in self?.progress = p }
+                        self?.progress = p
                     },
                     onStart: { [weak self] rid in
                         self?.activeRequestID = rid
-                    }) { [weak self] result in
+                    },
+                    timeout: 120) { [weak self] result in
             guard let self else { return }
             defer {
                 self.isBusy = false
@@ -362,6 +366,10 @@ final class AppViewModel: ObservableObject {
             }
             switch result {
             case .success(let r):
+                if r["cancelled"] as? Bool == true {
+                    statusText = "已取消"
+                    return
+                }
                 guard let data = try? JSONSerialization.data(withJSONObject: r),
                       let gen = try? JSONDecoder().decode(GenerateResult.self, from: data) else {
                     statusText = "解析结果失败"
@@ -383,7 +391,8 @@ final class AppViewModel: ObservableObject {
         } else {
             finishedImage = nil
         }
-        if trackKey != nil { loadTrack() }
+        // 不在此处 loadTrack：与编辑完成后的 saveTrack 并发会竞态，
+        // 迟到的旧 track 响应会覆盖刚保存的进度（进度只在换图时加载）
     }
 
     /// F5: 预览图降采样（≤2048px），避免大图在主线程渲染卡顿
@@ -405,6 +414,7 @@ final class AppViewModel: ObservableObject {
 
     // MARK: - 编辑
     func handlePreviewTap(location: CGPoint) {
+        guard !isBusy else { return }
         guard let img = chartImage, let result = lastResult else { return }
         let geo = previewSize(img: img)
         let imgX = (previewGeo.width - geo.width) / 2 + offset.width
@@ -428,6 +438,7 @@ final class AppViewModel: ObservableObject {
         let key = cellKey(popped)
         doneCells.remove(key)
         trackedCount = doneCells.count
+        saveTrack()
         applyEdits()
     }
 
@@ -446,11 +457,20 @@ final class AppViewModel: ObservableObject {
             "fit_box": gp.fitBox,
             "exact_grid": gp.exact,
             "overrides": editHistory,
-        ]) { [weak self] res in
+        ], onStart: { [weak self] rid in
+            self?.activeRequestID = rid
+        }, timeout: 120) { [weak self] res in
             guard let self else { return }
-            defer { self.isBusy = false }
+            defer {
+                self.isBusy = false
+                self.activeRequestID = nil
+            }
             switch res {
             case .success(let r):
+                if r["cancelled"] as? Bool == true {
+                    statusText = "已取消"
+                    return
+                }
                 guard let data = try? JSONSerialization.data(withJSONObject: r),
                       let gen = try? JSONDecoder().decode(GenerateResult.self, from: data) else {
                     statusText = "编辑解析失败"
@@ -517,6 +537,7 @@ final class AppViewModel: ObservableObject {
     // MARK: - 预览
     func previewSize(img: NSImage) -> CGSize {
         let base = CGSize(width: img.size.width, height: img.size.height)
+        guard base.width > 0, base.height > 0 else { return .zero }
         let scale: CGFloat
         if fitToWindow {
             scale = min(previewGeo.width / base.width, previewGeo.height / base.height)
@@ -546,7 +567,7 @@ final class AppViewModel: ObservableObject {
             "mode": mode, "cell_size": result.cellSize,
         ]
         if includeBOM { params["bom"] = result.colorStatsAny }
-        eng.request(op: "export_pdf", params: params) { [weak self] res in
+        eng.request(op: "export_pdf", params: params, timeout: 120) { [weak self] res in
             guard let self else { return }
             switch res {
             case .success:

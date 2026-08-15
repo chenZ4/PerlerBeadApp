@@ -86,7 +86,7 @@ final class BoundaryTests: XCTestCase {
         vm.handlePreviewTap(location: CGPoint(x: 400, y: 300))
         // 无效色号：引擎应忽略该格；本地栈仍记录（不崩即可）
         XCTAssertEqual(vm.editHistory.count, 1)
-        XCTAssertTrue(waitFor({ self.vm.lastResult != nil }), "编辑请求返回")
+        XCTAssertTrue(waitFor({ !self.vm.isBusy }), "无效编辑请求完成")
         // 有效色号叠加
         vm.editColorCode = "H1"
         vm.handlePreviewTap(location: CGPoint(x: 200, y: 200))
