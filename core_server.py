@@ -475,6 +475,21 @@ def serve():
     server = CoreServer()
     work_queue = queue.Queue()
 
+    # 协议管道加固：
+    # - stdin replace：二进制垃圾字节不得打死 reader 线程
+    #   （for line in sys.stdin 遇非法 UTF-8 抛 UnicodeDecodeError → 线程静默死亡
+    #   → 引擎假死；是否触发取决于 locale，Windows cp936 / CI 严格模式下必现）
+    # - stdout 强制 UTF-8：协议输出不随平台 locale（如 Windows gbk）变化，
+    #   否则中文响应在 worker 线程抛 UnicodeEncodeError 且 Swift 端按 UTF-8 切行会错乱
+    try:
+        sys.stdin.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
     def writer(msg):
         server._emit(msg)
 
