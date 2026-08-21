@@ -1,0 +1,67 @@
+# CI：push/PR 自动跑全量测试
+# - python-tests: 无界面自动化测试（macOS + Windows 双平台）
+# - swift-tests:  SwiftUI 壳测试（起真实 Python 引擎子进程，PERLER_PYTHON 指向 runner 的 python）
+# - gui-smoke-windows: Windows Tk 冒烟（跨平台声明验证，观察稳定后再转必过）
+#
+# 依赖说明：opencv 故意不装——chibi 特效对 ImportError 有优雅降级，
+# tests/run_tests.py 会输出「opencv 未安装（大头自动降级）」并照常通过。
+name: CI
+
+on:
+  push:
+    branches: [dev-2.0, master]
+  pull_request:
+    branches: [dev-2.0, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装依赖
+        run: pip install Pillow numpy
+      - name: 无界面自动化测试
+        run: python tests/run_tests.py
+
+  swift-tests:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装引擎依赖
+        run: pip install Pillow numpy
+      - name: Swift 测试（真实引擎子进程）
+        run: swift test
+        env:
+          # Engine.findPython 优先读 PERLER_PYTHON；必须是绝对路径
+          # （isExecutableFile 不解析裸命令名），pythonLocation 由 setup-python 导出
+          PERLER_PYTHON: ${{ env.pythonLocation }}/bin/python
+
+  gui-smoke-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装依赖
+        run: pip install Pillow numpy tkinterdnd2
+      - name: GUI 冒烟测试（零弹窗）
+        run: python tests/gui_smoke.py
