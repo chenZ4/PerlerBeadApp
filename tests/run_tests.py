@@ -1275,6 +1275,67 @@ def test_output_prune():
                     pass
 
 
+def test_golden_matrix():
+    print("== 测试6b: Golden 多配置矩阵 ==")
+    import hashlib
+    import json
+
+    from core.colors import get_palette
+    from core.processor import ImageProcessor
+
+    GOLDEN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "tests", "golden")
+    matrix_file = os.path.join(GOLDEN_DIR, "golden_matrix.json")
+    source_file = os.path.join(GOLDEN_DIR, "source.png")
+    if not (os.path.isfile(matrix_file) and os.path.isfile(source_file)):
+        report("golden_matrix 文件存在", False, "缺少文件，运行 update_golden.py --matrix")
+        return
+
+    with open(matrix_file, "r", encoding="utf-8") as f:
+        matrix = json.load(f)
+
+    proc = ImageProcessor()
+    for entry in matrix.get("entries", []):
+        cfg = entry["config"]
+        r = proc.process_image(
+            source_file, cfg["grid_w"], cfg["grid_h"], cell_size=cfg["cell_size"],
+            palette_name=cfg["palette"], effects=cfg.get("effects"),
+            exact_grid=cfg.get("exact_grid", False),
+            fit_box=cfg.get("fit_box", False),
+            show_finished=True, save=False)
+        h = hashlib.sha256(r.finished.tobytes()).hexdigest()
+        report(f"matrix[{entry['name']}] 哈希一致",
+               h == entry["finished_sha256"]
+               and list(r.finished.size) == entry["finished_size"],
+               f"expected={entry['finished_sha256'][:12]} got={h[:12]}")
+        r.chart.close()
+        r.finished.close()
+
+    # dither 结构断言（BLAS 位差异不入字节哈希）
+    palette = get_palette("mard_221")
+    grad = os.path.join(TEST_DIR, "grad_matrix.png")
+    img = Image.new("RGB", (160, 160))
+    px = img.load()
+    for y in range(160):
+        for x in range(160):
+            px[x, y] = (x * 255 // 160, y * 255 // 160, 128)
+    img.save(grad)
+    r_plain = proc.process_image(grad, 60, 60, cell_size=40, save=False)
+    r_dither = proc.process_image(grad, 60, 60, cell_size=40, save=False,
+                                  effects=[{"id": "dither", "params": {"strength": 1.0}}])
+    codes = set(palette.codes)
+    report("dither 总量守恒（= 网格面积）",
+           r_dither.total_beads == r_dither.grid_w * r_dither.grid_h,
+           str(r_dither.total_beads))
+    report("dither 色域不越界（⊆ 色卡）",
+           set(r_dither.color_stats.keys()) <= codes,
+           str(set(r_dither.color_stats.keys()) - codes)[:80])
+    report("dither 映射与无抖动不同",
+           r_plain.color_stats != r_dither.color_stats)
+    r_plain.chart.close()
+    r_dither.chart.close()
+
+
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
     test_models()
@@ -1287,6 +1348,7 @@ def main():
     test_history()
     test_memory()
     test_golden_and_perf()
+    test_golden_matrix()
     test_core_server()
     test_effects()
     test_stage3()
