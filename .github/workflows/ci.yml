@@ -85,5 +85,7 @@ jobs:
         run: |
           brew install xcodegen
           cd app && xcodegen generate
+          # 注意：不能加 CODE_SIGNING_ALLOWED=NO——未签名的 xctrunner 会被
+          # macOS kill（"Test crashed with signal kill"），工程内已配 ad-hoc 签名
           xcodebuild test -project PerlerApp.xcodeproj -scheme PerlerApp \
-            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+            -destination 'platform=macOS'

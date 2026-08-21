@@ -4,6 +4,10 @@ import XCTest
 /// 前提：`xcodegen generate` 生成工程后经 xcodebuild/Xcode 运行。
 /// 引擎依赖：runner/本机需有可用 Python（PERLER_PYTHON 或 conda 默认路径），
 /// 无引擎时相关用例 XCTSkip 而非失败。
+///
+/// 选择器备忘（实测视图树得出）：
+/// - SwiftUI Text 的文本在 accessibility 的 **value** 上，不在 label
+/// - 模板 Picker 初始值为「自定义」，按 value 定位；菜单项按 title 匹配
 final class SmokeUITests: XCTestCase {
 
     private func launchApp() -> XCUIApplication {
@@ -16,23 +20,19 @@ final class SmokeUITests: XCTestCase {
         return app
     }
 
-    /// 状态栏出现引擎就绪/未找到 Python 任一即视为启动流程完成
+    /// 状态栏出现引擎就绪/未找到 Python 任一即视为启动流程完成（文本在 value 上）
     private func waitForSetup(_ app: XCUIApplication, timeout: TimeInterval = 30) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            let ready = app.staticTexts.matching(
-                NSPredicate(format: "label CONTAINS '引擎就绪'")).firstMatch
-            let noPy = app.staticTexts.matching(
-                NSPredicate(format: "label CONTAINS '未找到 Python'")).firstMatch
-            if ready.exists || noPy.exists { return true }
-            sleep(1)
-        }
-        return false
+        let ready = app.staticTexts.matching(
+            NSPredicate(format: "value CONTAINS '引擎就绪'")).firstMatch
+        let noPy = app.staticTexts.matching(
+            NSPredicate(format: "value CONTAINS '未找到 Python'")).firstMatch
+        return ready.waitForExistence(timeout: timeout)
+            || noPy.waitForExistence(timeout: 1)
     }
 
     private func engineAvailable(_ app: XCUIApplication) -> Bool {
         !app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS '未找到 Python'")).firstMatch.exists
+            NSPredicate(format: "value CONTAINS '未找到 Python'")).firstMatch.exists
     }
 
     // U1. 启动不崩溃 + 引擎初始化流程走完
@@ -43,45 +43,47 @@ final class SmokeUITests: XCTestCase {
         app.terminate()
     }
 
-    // U2. 模板加载后选择器出现；选模板 → 点生成 → 预览出图（真实 E2E）
-    func testTemplateGenerateEndToEnd() {
+    // U2. 选模板 → 点生成 → 预览出图（真实 E2E：SwiftUI→VM→引擎子进程→回显）
+    func testTemplateGenerateEndToEnd() throws {
         let app = launchApp()
         XCTAssertTrue(waitForSetup(app))
         guard engineAvailable(app) else {
             throw XCTSkip("无 Python 引擎环境，跳过 E2E")
         }
-        // 等模板列表加载（Picker 出现「自定义」选项）
-        let custom = app.popUpButtons.firstMatch
-        XCTAssertTrue(custom.waitForExistence(timeout: 15), "模板选择器未出现")
+        // 模板 Picker 初始值「自定义」；等模板列表加载完成（该 Popup 出现）
+        let tplPopup = app.popUpButtons.matching(
+            NSPredicate(format: "value == '自定义'")).firstMatch
+        XCTAssertTrue(tplPopup.waitForExistence(timeout: 20), "模板选择器未出现")
 
-        // 直接点「生成」（默认无图应被禁用）→ 断言按钮禁用态正确
+        // 未选图时「生成」应禁用（参数守卫的 UI 表现）
         let generateBtn = app.buttons["生成"]
         XCTAssertTrue(generateBtn.waitForExistence(timeout: 5))
+        XCTAssertFalse(generateBtn.isEnabled, "未选图片时生成按钮应禁用")
 
-        // 选一个内置模板触发图片加载
-        custom.click()
+        // 打开模板菜单选「爱心」
+        tplPopup.click()
         let menuItem = app.menuItems.matching(
-            NSPredicate(format: "label CONTAINS '爱心'")).firstMatch
-        if menuItem.waitForExistence(timeout: 5) {
-            menuItem.click()
-            // 等生成按钮变为可用（模板图片加载完成）
-            let deadline = Date().addingTimeInterval(15)
-            while Date() < deadline && !generateBtn.isEnabled {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-            }
-            XCTAssertTrue(generateBtn.isEnabled, "模板加载后生成按钮应可用")
-            generateBtn.click()
-            // 预览区出现图纸内容（等待生成完成，60s 上限）
-            let previewReady = app.staticTexts.matching(
-                NSPredicate(format: "label CONTAINS '完成：'")).firstMatch
-            XCTAssertTrue(previewReady.waitForExistence(timeout: 60), "生成未在 60s 内完成")
+            NSPredicate(format: "title CONTAINS '爱心' OR label CONTAINS '爱心'")).firstMatch
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "模板菜单中未找到爱心")
+        menuItem.click()
+
+        // 模板加载后生成按钮变为可用
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline && !generateBtn.isEnabled {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        // 模板菜单结构变化时降级为不失败（U1/U3 已覆盖启动与交互安全）
+        XCTAssertTrue(generateBtn.isEnabled, "模板加载后生成按钮应可用")
+        generateBtn.click()
+
+        // 状态栏出现「完成：…」（文本在 value 上），60s 上限
+        let done = app.staticTexts.matching(
+            NSPredicate(format: "value CONTAINS '完成：'")).firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 60), "生成未在 60s 内完成")
         app.terminate()
     }
 
     // U3. 预览区连续拖拽不崩溃（偏移累加修复的 UI 级回归）
-    func testPreviewDragDoesNotCrash() {
+    func testPreviewDragDoesNotCrash() throws {
         let app = launchApp()
         XCTAssertTrue(waitForSetup(app))
         guard engineAvailable(app) else {
@@ -90,10 +92,10 @@ final class SmokeUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10))
         let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
-        // 无图时拖拽也应安全（空预览态）
+        // 无图空预览态下拖拽也应安全
         for dx in [0.1, -0.15, 0.05] {
-            start.withOffset(CGVector(dx: dx * 300, dy: 0)).press(forDuration: 0.05,
-                                                                  thenDragTo: start)
+            start.withOffset(CGVector(dx: dx * 300, dy: 0))
+                .press(forDuration: 0.05, thenDragTo: start)
         }
         XCTAssertEqual(app.state, .runningForeground, "连续拖拽后 app 应存活")
         app.terminate()

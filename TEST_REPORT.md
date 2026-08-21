@@ -185,4 +185,10 @@ CI：GitHub Actions 四 job——Python 双平台矩阵 / Swift 真实引擎 / W
 - golden 矩阵只字节哈希逐元素运算路径（跨平台位稳定）；dither 走 BLAS matvec 有位差异，
   以结构断言覆盖（总量守恒/色域⊆色卡/映射改变）
 - XCUITest：SPM 无法承载 UI 测试，新增 XcodeGen 工程规范（app/project.yml）+3 用例；
-  本地 `brew install xcodegen && cd app && xcodegen generate` 后可跑，CI 观察项先行验证
+  **已本地验证 3/3 全绿**（启动+引擎初始化 / 模板→生成 E2E / 拖拽安全）。
+  首跑排障记录：①Xcode 26 显式模块构建致多 target .swiftmodule 输出撞路径 →
+  逐 target 显式 PRODUCT_MODULE_NAME + SWIFT_ENABLE_EXPLICIT_MODULES=NO；
+  ②PRODUCT_NAME 需显式 $(TARGET_NAME)（否则产物名为空、CodeSign 失败）；
+  ③完全禁签会让 macOS kill 未签名 xctrunner → 改 ad-hoc 签名（"-"）；
+  ④SwiftUI Text 文本在 accessibility value 而非 label，模板 Picker 按 value='自定义' 定位。
+  本机 brew 安装超时，改用 GitHub Releases artifactbundle 直装（~/.local/bin/xcodegen）

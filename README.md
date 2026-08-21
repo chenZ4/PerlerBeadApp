@@ -60,6 +60,10 @@ cd app && xcodegen generate
 xcodebuild test -project PerlerApp.xcodeproj -scheme PerlerApp -destination 'platform=macOS'
 ```
 
+UI 测试已本地验证 3/3（启动+引擎初始化、模板→生成 E2E、拖拽安全）。
+注意：不要给 xcodebuild 加 `CODE_SIGNING_ALLOWED=NO`，未签名 Runner 会被 macOS 拒绝启动；
+工程内已配置 ad-hoc 签名（project.yml），无需证书。
+
 当前基线：`run_tests` 207 项 / `gui_smoke` 89 项 / `stress_protocol` 12 项 / `swift test` 66 项，全部通过。
 CI：push/PR 自动跑（GitHub Actions：Python 双平台 + Swift + Windows Tk 冒烟 + UI 测试观察项）。
 
