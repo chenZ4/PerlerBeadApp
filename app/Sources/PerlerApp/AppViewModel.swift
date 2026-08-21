@@ -170,7 +170,13 @@ final class AppViewModel: ObservableObject {
     @Published var fitToWindow = true
     @Published var showFinished = false
     @Published var offset = CGSize.zero
+    /// 拖拽手势起点时的偏移基准（多次拖拽累加，不回跳）
+    private var dragBaseOffset: CGSize?
     @Published var previewGeo = CGSize(width: 800, height: 600)
+
+    /// 结果归属代币：换图/换模板时递增；在途请求的完成回调校验一致才应用，
+    /// 防止迟到结果污染新图状态（internal 供测试读取）
+    private(set) var imageEpoch = 0
 
     var paletteInternal: String {
         palettes.first { $0.display == paletteDisplay }?.internalName ?? "mard_221"
@@ -264,6 +270,7 @@ final class AppViewModel: ObservableObject {
 
     /// 换图/换模板时重置结果与编辑状态（防止旧编辑污染新图）
     private func resetForNewImage(_ keySource: String) {
+        imageEpoch += 1
         editHistory = []
         doneCells = []
         trackedCount = 0
@@ -271,6 +278,7 @@ final class AppViewModel: ObservableObject {
         chartImage = nil
         finishedImage = nil
         offset = .zero
+        dragBaseOffset = nil
         progress = -1
         trackKey = stableKey(keySource)
         loadTrack()
@@ -350,6 +358,7 @@ final class AppViewModel: ObservableObject {
             "fit_box": gp.fitBox,
             "exact_grid": gp.exact,
         ]
+        let epoch = imageEpoch
         eng.request(op: "generate", params: params,
                     onProgress: { [weak self] p in
                         self?.progress = p
@@ -364,6 +373,8 @@ final class AppViewModel: ObservableObject {
                 self.progress = -1
                 self.activeRequestID = nil
             }
+            // 期间已换图/换模板：迟到结果只复位状态，不应用
+            guard epoch == self.imageEpoch else { return }
             switch result {
             case .success(let r):
                 if r["cancelled"] as? Bool == true {
@@ -447,6 +458,7 @@ final class AppViewModel: ObservableObject {
         isBusy = true
         statusText = "正在应用编辑…"
         let gp = gridParams()
+        let epoch = imageEpoch
         eng.request(op: "edit", params: [
             "image_path": path,
             "grid_w": result.gridW,
@@ -465,6 +477,8 @@ final class AppViewModel: ObservableObject {
                 self.isBusy = false
                 self.activeRequestID = nil
             }
+            // 期间已换图/换模板：迟到结果只复位状态，不应用
+            guard epoch == self.imageEpoch else { return }
             switch res {
             case .success(let r):
                 if r["cancelled"] as? Bool == true {
@@ -528,6 +542,8 @@ final class AppViewModel: ObservableObject {
         }
         eng.request(op: "track_load", params: ["key": key]) { [weak self] result in
             guard let self, case .success(let r) = result else { return }
+            // 回显 key 校验：快速换图时晚到的旧响应不得覆盖当前进度
+            guard r["key"] as? String == self.trackKey else { return }
             let cells = r["track"] as? [String] ?? []
             self.doneCells = Set(cells)
             self.trackedCount = cells.count
@@ -551,7 +567,8 @@ final class AppViewModel: ObservableObject {
     func exportPNG(to path: String) {
         guard let eng = engine, let result = lastResult else { return }
         eng.request(op: "export_png",
-                    params: ["source_path": result.chartPath, "save_path": path]) { [weak self] res in
+                    params: ["source_path": result.chartPath, "save_path": path],
+                    timeout: 120) { [weak self] res in
             guard let self else { return }
             switch res {
             case .success: self.statusText = "PNG 已导出"
@@ -580,6 +597,18 @@ final class AppViewModel: ObservableObject {
 
     // MARK: - 重置
     func resetPreviewOffset() {
+        dragBaseOffset = nil
         offset = .zero
+    }
+
+    // MARK: - 拖拽（以手势起点偏移为基准累加，多次拖拽不回跳）
+    func dragChanged(_ translation: CGSize) {
+        if dragBaseOffset == nil { dragBaseOffset = offset }
+        offset = CGSize(width: dragBaseOffset!.width + translation.width,
+                        height: dragBaseOffset!.height + translation.height)
+    }
+
+    func dragEnded() {
+        dragBaseOffset = nil
     }
 }

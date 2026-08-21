@@ -132,10 +132,6 @@ final class Engine {
             { p in DispatchQueue.main.async { progress(p) } }
         }
 
-        if let onStart {
-            DispatchQueue.main.async { onStart(rid) }
-        }
-
         lock.lock()
         if engineExited {
             lock.unlock()
@@ -146,6 +142,16 @@ final class Engine {
         }
         pending[rid] = (mainProgress, mainCompletion)
         lock.unlock()
+
+        // 同步回调 onStart：request 由主线程调用，返回时 rid 已登记到 pending。
+        // 若用 async 派发，「cancelActive 早于 onStart 执行」的窗口内取消会静默失效
+        if let onStart {
+            if Thread.isMainThread {
+                onStart(rid)
+            } else {
+                DispatchQueue.main.async { onStart(rid) }
+            }
+        }
 
         // F3: 超时保护，回调已保证主线程
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in

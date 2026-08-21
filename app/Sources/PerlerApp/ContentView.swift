@@ -43,6 +43,7 @@ struct ContentView: View {
                         .onChange(of: vm.selectedTemplate) { _, id in
                             vm.loadTemplate(id)
                         }
+                        .disabled(vm.isBusy)
                     }
                 }
 
@@ -213,9 +214,11 @@ struct ContentView: View {
     private var dragGesture: some Gesture {
         DragGesture()
             .onChanged { value in
-                vm.offset = value.translation
+                vm.dragChanged(value.translation)
             }
-            .onEnded { _ in }
+            .onEnded { _ in
+                vm.dragEnded()
+            }
     }
 
     private var editGesture: some Gesture {
@@ -227,6 +230,8 @@ struct ContentView: View {
 
     // MARK: - 文件交互
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        // 忙时拒绝拖入：防在途请求的迟到结果污染新图状态
+        guard !vm.isBusy else { return false }
         guard let provider = providers.first else { return false }
         _ = provider.loadObject(ofClass: URL.self) { url, _ in
             guard let url else { return }

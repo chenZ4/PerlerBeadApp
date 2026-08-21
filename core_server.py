@@ -87,7 +87,8 @@ class CoreServer:
         if op == "edit":
             return self._wrap(self._edit(rid, params))
         if op == "track_load":
-            return {"ok": True, "track": self._track_load(params)}
+            return {"ok": True, "key": str(params.get("key", "")),
+                    "track": self._track_load(params)}
         if op == "track_save":
             self._track_save(params)
             return {"ok": True}
