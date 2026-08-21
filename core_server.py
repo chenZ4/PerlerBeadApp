@@ -49,6 +49,36 @@ def tempfile_dir():
 
 TRACK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "track")
 
+# output/ 保留的最新产物文件数（generate/edit 中间产物会无限累积，需裁剪）
+MAX_OUTPUT_FILES = 50
+_OUTPUT_PREFIXES = ("perler_", "finished_")
+
+
+def prune_output(keep: int = MAX_OUTPUT_FILES):
+    """按 mtime 只保留最新 keep 个本工具产物，防止 output/ 无限增长。
+
+    仅清理 OUTPUT_DIR 下以 perler_/finished_ 开头的中间产物，
+    用户显式导出到其他位置的文件不受影响。
+    """
+    try:
+        entries = []
+        for name in os.listdir(OUTPUT_DIR):
+            if not name.startswith(_OUTPUT_PREFIXES):
+                continue
+            path = os.path.join(OUTPUT_DIR, name)
+            try:
+                entries.append((os.path.getmtime(path), path))
+            except OSError:
+                continue
+        entries.sort(reverse=True)
+        for _, path in entries[keep:]:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
 
 def track_dir():
     os.makedirs(TRACK_DIR, exist_ok=True)
@@ -250,6 +280,7 @@ class CoreServer:
                 result.finished.save(finished_path)
             finally:
                 result.finished.close()
+        prune_output()
         return {
             "chart_path": chart_path,
             "chart_size": chart_size,
@@ -334,6 +365,7 @@ class CoreServer:
                 result.finished.save(finished_path)
             finally:
                 result.finished.close()
+        prune_output()
         return {
             "chart_path": chart_path,
             "chart_size": chart_size,

@@ -66,6 +66,7 @@ class AppController:
         self._pending_regenerate = False
         self._modal_active = False
         self._closing = False
+        self._queue_cancel = False
         self.preview_timer = None
         self.color_chart_window = None
 

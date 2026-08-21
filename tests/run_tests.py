@@ -1202,6 +1202,79 @@ def test_robustness():
             close()
 
 
+def test_output_prune():
+    print("== 测试9: output 裁剪（防无限增长） ==")
+    import json
+    import subprocess
+    import tempfile
+    import time as _time
+
+    # 单元级：沙箱目录隔离（真实 output/ 可能有未知数量的新产物干扰计数）
+    import core_server as _cs
+    real_output = _cs.OUTPUT_DIR
+    sandbox = tempfile.mkdtemp(prefix="perler_prune_")
+    _cs.OUTPUT_DIR = sandbox
+    try:
+        now = _time.time()
+        names = []
+        for i in range(60):
+            p = os.path.join(sandbox, f"perler_prune_{i:03d}.png")
+            with open(p, "w") as f:
+                f.write("x")
+            os.utime(p, (now - 3600 + i, now - 3600 + i))
+            names.append(p)
+
+        _cs.prune_output(keep=50)
+        remaining = [p for p in names if os.path.exists(p)]
+        report("prune 保留最新 50 个", len(remaining) == 50, str(len(remaining)))
+        report("最旧的被删除", not os.path.exists(names[0]))
+        report("最新的被保留", os.path.exists(names[-1]))
+    finally:
+        _cs.OUTPUT_DIR = real_output
+        import shutil
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+    # 协议级：generate 落盘后自动触发裁剪（真实 output/ 中最旧 canary 必被清掉）
+    now = _time.time()
+    canary = os.path.join(real_output, "perler_prune_canary.png")
+    with open(canary, "w") as f:
+        f.write("x")
+    os.utime(canary, (now - 7200, now - 7200))
+    src = make_source(100, 100)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    proc = subprocess.Popen(
+        [sys.executable, os.path.join(root, "core_server.py")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+    def req(rid, op, params=None):
+        proc.stdin.write(json.dumps({"id": rid, "op": op, "params": params or {}}) + "\n")
+        proc.stdin.flush()
+        while True:
+            line = proc.stdout.readline()
+            msg = json.loads(line)
+            if msg.get("id") == rid and "event" not in msg:
+                return msg
+
+    try:
+        req(1, "ping")
+        r = req(2, "generate", {"image_path": src, "grid_w": 20, "grid_h": 20,
+                                "cell_size": 40})
+        report("generate 成功（裁剪前置条件）", r.get("ok"), str(r.get("error")))
+        report("generate 自动触发裁剪（canary 已清理）", not os.path.exists(canary))
+    finally:
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+        for n in os.listdir(real_output):
+            if n.startswith(("perler_prune_", "perler_prune2_", "perler_prune_canary")):
+                try:
+                    os.remove(os.path.join(real_output, n))
+                except OSError:
+                    pass
+
+
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
     test_models()
@@ -1217,6 +1290,7 @@ def main():
     test_core_server()
     test_effects()
     test_stage3()
+    test_output_prune()
     test_robustness()
     print("\n=== 结果汇总 ===")
     print(f"通过: {RESULT['passed']}   失败: {RESULT['failed']}")

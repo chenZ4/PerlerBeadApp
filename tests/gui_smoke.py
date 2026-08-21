@@ -543,6 +543,17 @@ report("批处理异常后开始按钮恢复",
 app.batch_service.process = orig_process
 app.clear_queue()
 
+print("== GUI: 批量取消标志防御 ==")
+# 未开始批量时点取消：属性必须已初始化且不崩溃
+try:
+    app._cancel_queue()
+    report("未开始批量时 _cancel_queue 不崩溃", True)
+except AttributeError as e:
+    report("未开始批量时 _cancel_queue 不崩溃", False, str(e))
+report("_queue_cancel 置位生效", getattr(app, "_queue_cancel", None) is True,
+       str(getattr(app, "_queue_cancel", None)))
+app._queue_cancel = False
+
 print("== GUI: 导出 PNG 失败注入 ==")
 app.select_image()
 pump()
