@@ -141,3 +141,48 @@ conda run -n pindou python tests/gui_smoke.py     # GUI 冒烟（67 项，零弹
 
 ### 其他
 - 常量单一来源（DEFAULT_PALETTE/CELL_PX/GRID/ACCENT/cm_hint）；特效公共函数提取；死代码清理；版本 2.2.0
+
+---
+
+# 2.2.1 修复与扩测记录（2026-08-21，dev-2.0）
+
+## 测试终态（全自动，零人工交互）
+
+| 套件 | 通过 | 说明 |
+|---|---|---|
+| `tests/run_tests.py` | 207 | +output 裁剪（沙箱单元+协议 canary）+golden 多配置矩阵（8 配置哈希+dither 结构断言） |
+| `tests/gui_smoke.py` | 89 | +批量取消标志防御初始化回归 |
+| `tests/stress_protocol.py` | 12 | 新增压力套件：取消风暴×24 双时序/长任务排队无丢失/垃圾输入轰炸/在途 EOF/RSS 内存基线 |
+| `swift test` | 66 | +InteractionRaceTests 6 项（拖拽累加/迟到结果代币/track 回显/取消即时生效） |
+| **合计** | **374 项** | 全绿 |
+
+CI：GitHub Actions 四 job——Python 双平台矩阵 / Swift 真实引擎 / Windows Tk 冒烟（观察）/ XCUITest（观察）。
+
+## 修复清单
+
+### Swift 交互竞态五连修
+- 拖拽偏移以手势起点为基准累加（多次拖拽不再跳回）；双击复位清基准
+- `imageEpoch` 结果归属代币：换图/换模板递增，generate/edit 完成回调校验一致才应用，
+  迟到结果只复位状态；忙时封堵预览区拖入与模板切换入口
+- `track_load` 响应回显 key，VM 校验后才应用进度（快速换图晚到响应不覆盖）
+- `Engine.onStart` 改同步调用（pending 注册后）：generate() 返回即可取消，
+  消除 cancelActive 早于 onStart 的竞态窗口
+- exportPNG 超时对齐 PDF 调至 120s
+
+### core_server
+- output/ 自动裁剪：generate/edit 落盘后按 mtime 只保留最新 50 个中间产物（防无限增长）
+- 协议管道加固：stdin errors=replace（二进制垃圾字节在严格解码 locale 下打死 reader
+  线程致引擎永久假死，已复现+验证）；stdout 强制 UTF-8（协议输出不随 Windows gbk 等 locale 漂移）
+
+### Tk
+- `_queue_cancel` 防御初始化（原依赖 process_queue 先执行才存在）
+
+### 画质/性能（输出哈希已随 golden 重生成留档）
+- 下采样 NEAREST→BOX（面积平均），照片类源图噪声显著降低
+- 抖动距离改内积展开式（1.5x）+ 误差 clamp 到 [0,255]；展开式与旧式逐像素计算 100% 等价
+
+## 扩测说明
+- golden 矩阵只字节哈希逐元素运算路径（跨平台位稳定）；dither 走 BLAS matvec 有位差异，
+  以结构断言覆盖（总量守恒/色域⊆色卡/映射改变）
+- XCUITest：SPM 无法承载 UI 测试，新增 XcodeGen 工程规范（app/project.yml）+3 用例；
+  本地 `brew install xcodegen && cd app && xcodegen generate` 后可跑，CI 观察项先行验证
