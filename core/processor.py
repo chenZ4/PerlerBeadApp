@@ -134,7 +134,8 @@ class ImageProcessor:
                 final_grid_h = grid_h
                 final_grid_w = max(1, int(grid_h * orig_w / orig_h))
 
-            small_img = img.resize((final_grid_w, final_grid_h), resample=Image.NEAREST)
+            # BOX（面积平均）下采样：NEAREST 单像素采样在照片上噪声大
+            small_img = img.resize((final_grid_w, final_grid_h), resample=Image.BOX)
 
             # 2. 加载色卡
             palette = get_palette(palette_name)
