@@ -43,15 +43,25 @@ conda run -n pindou python main.py     # 或 ./run.sh / run.bat
 cd app && swift run
 ```
 
-## 测试（交付门禁，三套必须全绿）
+## 测试（交付门禁，全绿）
 
 ```bash
-conda run -n pindou python tests/run_tests.py   # 引擎+模型+服务层无界面自动化
-conda run -n pindou python tests/gui_smoke.py   # Tk 版 GUI 冒烟（零弹窗零交互）
-cd app && swift test                            # Swift 版（VM + 引擎协议 + 回归）
+conda run -n pindou python tests/run_tests.py        # 引擎+模型+服务层无界面自动化
+conda run -n pindou python tests/gui_smoke.py        # Tk 版 GUI 冒烟（零弹窗零交互）
+conda run -n pindou python tests/stress_protocol.py  # 协议压力：取消风暴/垃圾输入/内存基线
+cd app && swift test                                 # Swift 版（VM + 引擎协议 + 回归）
 ```
 
-当前基线：`run_tests` 191 项 / `gui_smoke` 87 项 / `swift test` 60 项，全部通过。
+可选（XCUITest 真实 UI 层，需 XcodeGen 生成工程）：
+
+```bash
+brew install xcodegen
+cd app && xcodegen generate
+xcodebuild test -project PerlerApp.xcodeproj -scheme PerlerApp -destination 'platform=macOS'
+```
+
+当前基线：`run_tests` 207 项 / `gui_smoke` 89 项 / `stress_protocol` 12 项 / `swift test` 66 项，全部通过。
+CI：push/PR 自动跑（GitHub Actions：Python 双平台 + Swift + Windows Tk 冒烟 + UI 测试观察项）。
 
 ## 工程说明
 

@@ -65,3 +65,25 @@ jobs:
         run: pip install Pillow numpy tkinterdnd2
       - name: GUI 冒烟测试（零弹窗）
         run: python tests/gui_smoke.py
+
+  ui-tests-macos:
+    # XCUITest 真实 UI 层（XcodeGen 生成工程）。首跑观察项：
+    # 无头 runner 上 UI 测试稳定性待验证，稳定后移除 continue-on-error 转必过
+    runs-on: macos-15
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装引擎依赖
+        run: pip install Pillow numpy
+      - name: 生成工程并运行 UI 测试
+        env:
+          PERLER_PYTHON: ${{ env.pythonLocation }}/bin/python
+        run: |
+          brew install xcodegen
+          cd app && xcodegen generate
+          xcodebuild test -project PerlerApp.xcodeproj -scheme PerlerApp \
+            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO

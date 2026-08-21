@@ -375,3 +375,4 @@ app/.swiftpm/
 
 # 打包产物（.app / zip / 图标）
 dist/
+app/*.xcodeproj

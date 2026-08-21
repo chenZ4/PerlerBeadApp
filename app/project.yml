@@ -1,0 +1,52 @@
+# XcodeGen 工程规范：生成 PerlerApp.xcodeproj（SPM 无法承载 XCUITest，
+# UI 测试需要真正的 app target）。生成方式：
+#   brew install xcodegen
+#   cd app && xcodegen generate
+# 生成的 .xcodeproj 已 gitignore，不进版本库；本文件是唯一事实来源。
+name: PerlerApp
+options:
+  bundleIdPrefix: com.perler
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    # 本地开发/CI 均用 ad-hoc 签名，免证书
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+targets:
+  PerlerApp:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/PerlerApp
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: com.perler.app
+        SWIFT_VERSION: "5.0"
+  PerlerAppUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - Tests/PerlerAppUITests
+    dependencies:
+      - target: PerlerApp
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: com.perler.uitests
+        SWIFT_VERSION: "5.0"
+schemes:
+  PerlerApp:
+    build:
+      targets:
+        PerlerApp: all
+        PerlerAppUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - PerlerAppUITests
