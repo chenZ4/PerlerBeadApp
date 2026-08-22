@@ -192,3 +192,43 @@ CI：GitHub Actions 四 job——Python 双平台矩阵 / Swift 真实引擎 / W
   ③完全禁签会让 macOS kill 未签名 xctrunner → 改 ad-hoc 签名（"-"）；
   ④SwiftUI Text 文本在 accessibility value 而非 label，模板 Picker 按 value='自定义' 定位。
   本机 brew 安装超时，改用 GitHub Releases artifactbundle 直装（~/.local/bin/xcodegen）
+
+---
+
+# 2.2.2 网格实时联动修复（2026-08-22，dev-2.0）
+
+## 主诉
+网格设置里底层联动正常，但另一侧输入框 UI 不刷新；且期望「原始比例」也参与联动。
+
+## 根因与修复
+### D1 · UI 不刷新（渲染层）
+macOS SwiftUI TextField 已知缺陷：窗口内有字段正在编辑时，程序化绑定更新不会重绘
+其他字段的显示文本。修复：GridFieldRow 改为 NSViewRepresentable 桥接 NSTextField，
+`updateNSView` 对非焦点字段强制同步 stringValue → 联动值逐键即时上屏；
+回车提交后若字段仍持焦点也回写规范化值。
+
+### D2 · 原始比例/等比完整不联动（逻辑层）
+新增 `imageAspect`（CGImageSource 读像素尺寸元数据，不解码整图），
+`linkedDimensions` 对原始比例/等比完整按源图比联动：
+改宽 w → 高=round(w×ih/iw)；改高 h → 宽=round(h×iw/ih)；无图不联动。
+换图自动更新 aspect；模板加载仍显式设 gridW/H。
+
+### 附带真 bug · 联动回声指纹未随换图失效
+lastProgrammaticW/H 只在 writeLinked 时写入：图 A 联动后切到图 B，
+若首次输入恰与旧结果相同会被误判为回声而跳过联动。已在 resetForNewImage 重置。
+
+## 工况真值表（全部有测试锚定）
+| # | 模式 | 图片 | 行为 |
+|---|---|---|---|
+| 1 | 固定比例(5种) | 任意 | 固定比联动（保持） |
+| 2/3 | 原始比例 | 有图 | 双向按像素比联动（新增） |
+| 4 | 原始比例/等比完整 | 无图 | 不联动 |
+| 5 | 等比完整 | 有图 | 同原始比例规则（新增） |
+| 6/7 | 非法输入 / 越界 | - | 不联动 / 先 clamp 再联动 |
+| 8 | 程序回写 | - | 指纹抑制不重触发 |
+| 9 | 换图/模板 | - | 指纹失效 + 显式设值不被覆盖 |
+| 10 | UI 显示 | - | 逐键刷新无需回车（U4 实测） |
+
+## 测试终态
+- swift test 73 项（+7 工况单测）
+- XCUITest 4 项（+U4 testGridLinkageRefreshesUI：typeText "6" 无回车断言高框即时变 "6"）

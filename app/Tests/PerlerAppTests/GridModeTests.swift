@@ -151,6 +151,89 @@ final class GridModeTests: XCTestCase {
         XCTAssertEqual(vm.gridH, "40", "清空宽时不应联动高")
     }
 
+    // ===== 原始比例/等比完整按源图像素比联动（工况 #2/#3/#5） =====
+
+    // 工况#2：原始比例 + 有图（160×120，ar=4/3）→ 改宽 80 → 高=60
+    func testOriginalRatioLinksWidthToHeightByAspect() {
+        vm.setImagePath(makeTestImage())   // 160×120
+        XCTAssertNotNil(vm.imageAspect)
+        vm.ratioMode = "原始比例"
+        vm.gridW = "80"
+        vm.gridH = "29"
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridW, "80")
+        XCTAssertEqual(vm.gridH, "60", "原始比例应按源图 4:3 联动高（80×3/4）")
+    }
+
+    // 工况#3：原始比例改高 → 宽跟随（h=90 → w=120）
+    func testOriginalRatioLinksHeightToWidthByAspect() {
+        vm.setImagePath(makeTestImage())
+        vm.ratioMode = "原始比例"
+        vm.gridW = "29"
+        vm.gridH = "90"
+        vm.gridFieldEdited("h")
+        XCTAssertEqual(vm.gridW, "120", "改高应按源图比例联动宽（90×4/3）")
+        XCTAssertEqual(vm.gridH, "90")
+    }
+
+    // 工况#5：等比完整同规则
+    func testFitBoxLinksByAspect() {
+        vm.setImagePath(makeTestImage(200, 100))   // ar=2.0
+        vm.ratioMode = "等比完整"
+        vm.gridW = "50"
+        vm.gridH = "99"
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridH, "25", "等比完整应按源图 2:1 联动高")
+    }
+
+    // 工况#4：无图时不联动
+    func testOriginalRatioNoImageNoLink() {
+        vm.imageAspect = nil
+        vm.ratioMode = "原始比例"
+        vm.gridW = "30"
+        vm.gridH = "44"
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridW, "30")
+        XCTAssertEqual(vm.gridH, "44", "无图时原始比例不联动")
+    }
+
+    // 换图后 aspect 更新（2:1 图 → 1:2 竖图）
+    func testAspectUpdatesOnImageChange() {
+        vm.setImagePath(makeTestImage(200, 100))
+        vm.ratioMode = "原始比例"
+        vm.gridW = "40"; vm.gridH = "20"
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridH, "20")
+
+        vm.setImagePath(makeTestImage(100, 200))   // ar=0.5
+        vm.gridW = "40"; vm.gridH = "20"
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridH, "80", "换竖图后联动方向随之改变")
+    }
+
+    // 工况#7：越界值先 clamp 再联动（9999→500，aspect 4/3 → 高=375）
+    func testClampBeforeLinkOriginalRatio() {
+        vm.setImagePath(makeTestImage())
+        vm.ratioMode = "原始比例"
+        vm.gridW = "500"
+        vm.gridH = "10"
+        vm.gridW = "9999"
+        vm.gridFieldEdited("w")
+        XCTAssertEqual(vm.gridW, "500", "超上限先钳制到 500")
+        XCTAssertEqual(vm.gridH, "375", "以 clamp 后的宽联动高（500×3/4）")
+    }
+
+    // 工况#9：模板显式设值不被联动覆盖（loadTemplate 直写 gridW/H）
+    func testTemplateDimsNotOverwritten() {
+        vm.imageAspect = 1.0
+        vm.selectedTemplate = "heart"
+        vm.gridW = "9"
+        vm.gridH = "9"          // 模拟 loadTemplate 的直写（didSet 记录 h）
+        vm.commitDimension("h") // 回车规范化路径也不得改变 9×9
+        XCTAssertEqual(vm.gridW, "9")
+        XCTAssertEqual(vm.gridH, "9")
+    }
+
     // 生成前自动联动：1:1 下只改宽、高未联动 → 生成仍为正方形
     func testGenerateRelinksFromWidth() {
         let src = makeTestImage()

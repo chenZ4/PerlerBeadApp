@@ -100,4 +100,39 @@ final class SmokeUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "连续拖拽后 app 应存活")
         app.terminate()
     }
+
+    // U4. 网格输入实时联动上屏：改宽不回车，高框逐键刷新
+    // （macOS SwiftUI TextField 不重绘缺陷的桥接修复回归）
+    func testGridLinkageRefreshesUI() throws {
+        let app = launchApp()
+        XCTAssertTrue(waitForSetup(app))
+        // 切到固定比例 1:1（该模式下宽=高，断言明确）
+        let ratioPopup = app.popUpButtons.matching(
+            NSPredicate(format: "value == '原始比例'")).firstMatch
+        XCTAssertTrue(ratioPopup.waitForExistence(timeout: 15), "比例选择器未出现")
+        ratioPopup.click()
+        let item = app.menuItems.matching(
+            NSPredicate(format: "title == '1:1' OR label == '1:1'")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "比例菜单未找到 1:1")
+        item.click()
+
+        let wField = app.textFields.matching(
+            NSPredicate(format: "placeholderValue == '宽 (颗)'")).firstMatch
+        let hField = app.textFields.matching(
+            NSPredicate(format: "placeholderValue == '高 (颗)'")).firstMatch
+        XCTAssertTrue(wField.waitForExistence(timeout: 5))
+        XCTAssertTrue(hField.waitForExistence(timeout: 5))
+
+        // 聚焦宽框 → 全选 → 输入，全程不按回车
+        wField.click()
+        wField.doubleClick()
+        wField.typeKey("a", modifierFlags: .command)
+        wField.typeText("6")
+        XCTAssertEqual(hField.value as? String, "6",
+                       "输入第一个字符后高框应立即联动上屏")
+        wField.typeText("0")
+        XCTAssertEqual(hField.value as? String, "60",
+                       "第二个字符后仍应逐键联动（无回车）")
+        app.terminate()
+    }
 }

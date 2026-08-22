@@ -276,8 +276,11 @@ struct ContentView: View {
     }
 }
 
-/// 网格输入行：独立 View 结构体（稳定身份，避免 macOS 上
-/// TextField 位于 ScrollView + 函数透传绑定导致的失焦/无法输入问题）
+/// 网格输入行：NSTextField 桥接。
+/// SwiftUI TextField 在 macOS 上有已知缺陷：窗口内有字段正在编辑时，
+/// 程序化绑定更新不会重绘其他字段的显示文本（联动值变了但 UI 不动）。
+/// 原生桥接在 updateNSView 对非焦点字段强制同步 stringValue，联动立即上屏；
+/// 回车提交后若字段仍持焦点也回写规范化值（编辑会话已结束，光标移末尾可接受）。
 struct GridFieldRow: View {
     let label: String
     @Binding var text: String
@@ -287,11 +290,77 @@ struct GridFieldRow: View {
     var body: some View {
         HStack {
             Text(label).frame(width: 70, alignment: .leading)
-            TextField(label, text: $text)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: .infinity)
-                .onChange(of: text) { _, _ in onEdit?() }
-                .onSubmit { onSubmit?() }
+            NSTextFieldBridge(text: $text, label: label,
+                              onEdit: onEdit, onSubmit: onSubmit)
+                .frame(maxWidth: .infinity, minHeight: 24)
+        }
+    }
+}
+
+private struct NSTextFieldBridge: NSViewRepresentable {
+    @Binding var text: String
+    let label: String
+    var onEdit: (() -> Void)?
+    var onSubmit: (() -> Void)?
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var onEdit: (() -> Void)?
+        var onSubmit: (() -> Void)?
+        weak var view: NSTextField?
+
+        init(text: Binding<String>, onEdit: (() -> Void)?, onSubmit: (() -> Void)?) {
+            self.text = text
+            self.onEdit = onEdit
+            self.onSubmit = onSubmit
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let tf = obj.object as? NSTextField else { return }
+            text.wrappedValue = tf.stringValue
+            onEdit?()
+        }
+
+        @objc func submit() {
+            onSubmit?()
+            guard let tf = view else { return }
+            DispatchQueue.main.async {
+                if tf.currentEditor() != nil,
+                   tf.stringValue != self.text.wrappedValue {
+                    tf.stringValue = self.text.wrappedValue
+                }
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onEdit: onEdit, onSubmit: onSubmit)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let tf = NSTextField(string: text)
+        tf.placeholderString = label
+        tf.delegate = context.coordinator
+        tf.target = context.coordinator
+        tf.action = #selector(Coordinator.submit)
+        tf.bezelStyle = .roundedBezel
+        tf.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        tf.usesSingleLineMode = true
+        tf.cell?.wraps = false
+        tf.cell?.isScrollable = true
+        tf.translatesAutoresizingMaskIntoConstraints = false
+        context.coordinator.view = tf
+        return tf
+    }
+
+    func updateNSView(_ tf: NSTextField, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.onEdit = onEdit
+        context.coordinator.onSubmit = onSubmit
+        if tf.placeholderString != label { tf.placeholderString = label }
+        // 核心修复：非焦点时以 binding 为准——另一侧被联动写入时立即上屏
+        if tf.currentEditor() == nil, tf.stringValue != text {
+            tf.stringValue = text
         }
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ImageIO
 
 /// 主界面交互逻辑（可测试：模拟用户操作 = 调用 VM 方法 + 真实引擎后端）
 @MainActor
@@ -25,6 +26,9 @@ final class AppViewModel: ObservableObject {
 
     // MARK: 参数
     @Published var imagePath: String?
+    /// 源图像素宽高比（iw/ih）：原始比例/等比完整联动依据；无图或读取失败为 nil
+    /// （internal setter 供单元测试注入工况）
+    var imageAspect: Double?
     /// 最后编辑的维度（'w'/'h'）：固定比例下生成前按它联动另一侧
     private var lastEditedDim = "w"
     /// 程序写入联动值时抑制 didSet 记录（避免联动自身被当作用户编辑）
@@ -74,7 +78,9 @@ final class AppViewModel: ObservableObject {
     }
 
     /// 固定比例联动（纯函数：返回联动后的 (w, h)）
-    private func linkedDimensions(source: String, w: Int, h: Int) -> (Int, Int) {
+    /// 原始比例/等比完整：按源图像素比联动（无图 aspect=nil 不联动）
+    private func linkedDimensions(source: String, w: Int, h: Int,
+                                  aspect: Double?) -> (Int, Int) {
         switch ratioMode {
         case "1:1":
             let side = source == "w" ? w : h
@@ -91,6 +97,12 @@ final class AppViewModel: ObservableObject {
         case "9:16":
             return source == "w" ? (w, max(1, Int((Double(w) * 16 / 9).rounded())))
                                  : (max(1, Int((Double(h) * 9 / 16).rounded())), h)
+        case "原始比例", "等比完整":
+            guard let ar = aspect, ar > 0 else { return (w, h) }
+            if source == "w" {
+                return (w, max(1, Int((Double(w) / ar).rounded())))
+            }
+            return (max(1, Int((Double(h) * ar).rounded())), h)
         default:
             return (w, h)
         }
@@ -110,7 +122,7 @@ final class AppViewModel: ObservableObject {
     func applyRatioLink(source: String = "w") {
         let w = clampedGrid(gridW, fallback: 50)
         let h = clampedGrid(gridH, fallback: 50)
-        let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
+        let (nw, nh) = linkedDimensions(source: source, w: w, h: h, aspect: imageAspect)
         writeLinked(nw, nh)
     }
 
@@ -127,7 +139,7 @@ final class AppViewModel: ObservableObject {
         lastEditedDim = source
         let w = clampedGrid(gridW, fallback: 50)
         let h = clampedGrid(gridH, fallback: 50)
-        let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
+        let (nw, nh) = linkedDimensions(source: source, w: w, h: h, aspect: imageAspect)
         writeLinked(nw, nh)
     }
 
@@ -136,7 +148,7 @@ final class AppViewModel: ObservableObject {
         lastEditedDim = source
         let w = clampedGrid(gridW, fallback: 50)
         let h = clampedGrid(gridH, fallback: 50)
-        let (nw, nh) = linkedDimensions(source: source, w: w, h: h)
+        let (nw, nh) = linkedDimensions(source: source, w: w, h: h, aspect: imageAspect)
         writeLinked(nw, nh)
     }
 
@@ -264,13 +276,28 @@ final class AppViewModel: ObservableObject {
     func setImagePath(_ path: String) {
         imagePath = path
         selectedTemplate = nil
+        imageAspect = Self.readImageAspect(path)
         resetForNewImage(path)
         statusText = "已选择图片"
+    }
+
+    /// 读图片像素宽高比（CGImageSource 只读元数据，不解码整图；失败返回 nil）
+    static func readImageAspect(_ path: String) -> Double? {
+        guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
+              let h = props[kCGImagePropertyPixelHeight] as? CGFloat,
+              w > 0, h > 0 else { return nil }
+        return Double(w / h)
     }
 
     /// 换图/换模板时重置结果与编辑状态（防止旧编辑污染新图）
     private func resetForNewImage(_ keySource: String) {
         imageEpoch += 1
+        // 联动回声指纹一并失效：否则新图上输入与旧图联动结果相同时，
+        // 首次编辑会被误判为回声而跳过联动
+        lastProgrammaticW = nil
+        lastProgrammaticH = nil
         editHistory = []
         doneCells = []
         trackedCount = 0
@@ -293,6 +320,7 @@ final class AppViewModel: ObservableObject {
                 if let p = r["image_path"] as? String {
                     self.imagePath = p
                     self.selectedTemplate = id
+                    self.imageAspect = Self.readImageAspect(p)
                     if let w = r["width"] as? Int { self.gridW = "\(w)" }
                     if let h = r["height"] as? Int { self.gridH = "\(h)" }
                     self.resetForNewImage("tpl_\(id)")
@@ -342,7 +370,8 @@ final class AppViewModel: ObservableObject {
         var h = clampedGrid(gridH, fallback: 29)
         if gp.exact {
             // 生成前按最后编辑的维度联动，保证固定比例下尺寸一致（对齐 Tk 行为）
-            let (nw, nh) = linkedDimensions(source: lastEditedDim, w: w, h: h)
+            let (nw, nh) = linkedDimensions(source: lastEditedDim, w: w, h: h,
+                                            aspect: imageAspect)
             w = nw
             h = nh
             writeLinked(nw, nh)
