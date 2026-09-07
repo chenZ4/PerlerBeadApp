@@ -123,32 +123,45 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
 
 | 模式 | 引擎参数 | 行为 |
 |---|---|---|
-| 原始比例（宽为基准） | 均不传 | 以较宽一侧为基准，另一侧按源图比例重算（可能忽略输入的一侧） |
-| 等比完整（适应框内） | `fit_box=True` | 请求框内等比完整放入 |
+| 原始比例（宽为基准） | 均不传 | **WYSIWYG**：请求为「联动配对」时原样生效；模糊请求以宽为基准 |
+| 等比完整（适应框内） | `fit_box=True` | **WYSIWYG**：请求为「联动配对」时原样生效；模糊请求等比放入框内 |
 | 1:1 / 4:3 / 3:4 / 16:9 / 9:16 | `exact_grid=True` | **精确网格**，不被源图比例覆盖 |
 | 自定义 | 均不传 | 同原始比例 |
 
-历史主诉「设 40×40 结果被源图比例覆盖成 40×30」的根因：界面选了固定比例但未传
-`exact_grid`。**Tk 版 2026-08-13 已修复**（`ChartService`/`BatchService` 统一处理），
-Swift 版 2.1.3 已修复。
+**联动配对与引擎 WYSIWYG（2026-09-08 修复，主诉「联动没解决/生成尺寸对不上」）**：
 
-比例联动规则（`core.models.link_dimensions`，Tk 与 Swift 行为对齐）：
-- 双向联动：编辑宽 → 高跟随；编辑高 → 宽跟随（四舍五入 `round()`）
-- Tk 版：失焦/回车时联动；Swift 版：**输入实时联动**（半输入/清空不联动），
-  且生成前按 `lastEditedDim` 自动联动兜底
+- 联动配对 = 编辑侧值 + 另一侧按公式半上舍入（`math.floor(x+0.5)`，对齐 Swift `.rounded()`；
+  **Python 内建 `round()` 是银行家舍入，x.5 向下，联动公式禁用**）。
+  固定比例按比例联动；原始比例/等比完整按源图像素比联动。
+- 引擎收到请求后与「宽基准/高基准」两个保比例候选**精确匹配**，命中即原样生效
+  （UI 显示什么，图纸就是什么）。历史根因：引擎 `int()` 截断 + 固定按较宽侧重算，
+  与 UI 的 `rounded()` 联动值差 1（160 组合实测 68 组不一致，如 4:3 图输入宽 40 →
+  UI 显示 40×30、引擎出 40×29）。
+- 未命中（模糊请求，如旧客户端直接传任意值）保持旧语义：原始比例=宽基准、等比完整=min scale。
+
+比例联动规则（`core.models.link_dimensions`，Tk 与 Swift 对齐）：
+- **双向实时联动**：改宽 → 高逐键跟随；改高 → 宽逐键跟随
+  （Tk 版 KeyRelease 绑定；Swift 版 NSTextField 桥接，绕过 SwiftUI TextField
+  在 macOS 上「程序化绑定不重绘其他字段」的缺陷）
+- 原始比例/等比完整按源图像素比联动（无图时按 1:1 兜底联动——改一侧另一侧必须动）
+- 半输入/清空不联动（两侧均为合法整数才联动）；程序写入的联动回声不覆盖 `lastEditedDim`，
+  生成前固定比例按 `lastEditedDim` 自动联动兜底
 
 ## 5. 测试策略
 
 | 套件 | 覆盖 | 命令 |
 |---|---|---|
-| `tests/run_tests.py` | 引擎管线/色卡/模板/BOM/PDF/特效/协议/模型/服务 | `conda run -n pindou python tests/run_tests.py` |
-| `tests/gui_smoke.py` | Tk 版全流程（面板/队列/撤销/拖动/持久化/内存） | `conda run -n pindou python tests/gui_smoke.py` |
-| `app/` swift test | Swift VM + 引擎协议 + 网格回归 | `cd app && swift test` |
+| `tests/run_tests.py` | 引擎管线/色卡(Lab)/模板/BOM/PDF/特效/协议/模型/服务/WYSIWYG 联动 | `conda run -n pindou python tests/run_tests.py` |
+| `tests/gui_smoke.py` | Tk 版全流程（面板/实时联动/队列/撤销/拖动/持久化/内存） | `conda run -n pindou python tests/gui_smoke.py` |
+| `app/` swift test | Swift VM + 引擎协议 + 网格/特效回归 | `cd app && swift test` |
 
 约定：
 
-- **测试门禁**：三套全绿才可交付；不采信口头结果，必须由执行者独立跑出绿。
-- gui_smoke 全程零弹窗零交互（打桩 filedialog/messagebox）。
+- **测试门禁**：各套件全绿才可交付；不采信口头结果，必须由执行者独立跑出绿。
+- **套件不可并发跑**：swift test 会起真实引擎子进程写共享 `output/` 并触发裁剪，
+  与 run_tests 并发会互相删掉对方的中间产物（实测 2 项假失败）。必须顺序执行。
+- gui_smoke 全程零弹窗零交互（打桩 filedialog/messagebox）；Tk 合成 `event_generate`
+  KeyRelease 不触发 widget 绑定，实时联动用例直调 `settings_panel._on_key_release`。
 - 测试数据隔离：`HistoryManager(file_path=...)`、临时目录；不得污染仓库根目录的
   `history.json` / `app_settings.json` / `queue_state.json`。
 - 已知无害现象：`run_tests` 中「文件不存在返回 None」用例会打印一条引擎 traceback
@@ -167,7 +180,11 @@ Swift 版 2.1.3 已修复。
 
 ## 7. 已知限制
 
-- Tk 版暂无特效面板（特效仅在 Swift 版暴露，引擎层已支持）。
+- Tk 版暂无特效面板（特效仅在 Swift 版暴露，引擎层已支持，15 项全暴露）。
 - 1:1 PDF 的出血/页码为栅格绘制，拼贴效果需打印后人工确认。
 - Windows 端 Tk 主题与快捷键逻辑已实现，需在 Windows 机器跑一次 gui_smoke 确认。
-- 原始比例模式下引擎会以较宽一侧为基准，另一侧输入可能被忽略（语义如此，见第 4 节）。
+- 邻接描边（outline_cell）语义是「所有相邻异色对画线」：多色细节图上会形成网状
+  （默认已不描外轮廓），建议配合「限色数」使用。
+- 大头特效（chibi）依赖 OpenCV 人脸检测（requirements 已含）；缺失时静默跳过不报错。
+- 色卡匹配为 CIELAB（D65）感知距离：旧 golden 基准已于 2026-09-08 重生成
+  （`tests/golden/update_golden.py --matrix`），再改匹配算法需同步重生成。

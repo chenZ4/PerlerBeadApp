@@ -232,3 +232,81 @@ lastProgrammaticW/H 只在 writeLinked 时写入：图 A 联动后切到图 B，
 ## 测试终态
 - swift test 73 项（+7 工况单测）
 - XCUITest 4 项（+U4 testGridLinkageRefreshesUI：typeText "6" 无回车断言高框即时变 "6"）
+
+---
+
+# 2.3.0 深度测试与修复记录（2026-09-08）
+
+## 背景与输入
+
+用户主诉：① 网格输入联动没解决（改宽/高，另一侧输入框不动）；② 特效几乎不可以用（效果不好）。
+本轮以资深测试视角执行：定向探针 → 根因 → 修复 → 回归 → 全量门禁。
+
+## 发现与修复
+
+### F1 网格联动「没解决」——三层根因，全部修复
+
+1. **引擎不 WYSIWYG（主根因，探针实锤）**：UI 联动用四舍五入，引擎 `int()` 截断且固定按
+   较宽侧重算 → 全比例×编辑侧×尺寸 160 组合实测 **68 组不一致**（如 4:3 图改宽 40：
+   UI 40×30 / 引擎 40×29；竖图 0.75 改宽 40：UI 40×53 / 引擎 39×53；fit_box 1.4 框 30：
+   UI 30×21 / 引擎 29×21）。
+   修复：引擎 WYSIWYG 候选路由（`processor.process_image`：请求=宽/高基准联动配对时原样
+   生效；模糊请求保持旧语义=宽基准 / min-scale）；舍入统一**半上** `floor(x+0.5)`
+   （对齐 Swift `.rounded()`；Python `round()` 是银行家舍入，x.5 向下，联动公式禁用，
+   `core.models.link_dimensions` 已同步）。
+   回归：run_tests `test_wysiwyg_link`（96 组真实引擎矩阵）+ 半上舍入用例 + aspect 联动
+   用例；Swift `EffectsExposureTests` 2 项 VM 级（联动配对=引擎结果）。
+2. **Swift 无图时不联动**：原始比例/等比完整在 `aspect=nil` 时完全不联动——默认态
+   （打开 app 未选图）改宽/高另一侧永远不动，即用户感知的「没解决」。
+   修复：无图按 1:1 兜底联动（选图后真实 aspect 接管）。
+   回归：`GridModeTests.testOriginalRatioNoImageLinksSquare`。
+3. **Tk 版无实时联动**：此前仅失焦/回车联动。修复：`<KeyRelease>` 实时联动（两侧均为
+   合法整数才联动、不回写正在编辑的框）+ 按源图比例联动（`SettingsPanel.set_aspect`，
+   选图/加载历史时由控制器更新）。
+   回归：gui_smoke 3 项（1:1 实时联动 / 源图比联动 / 半输入不联动）。
+   注：Tk 合成 `event_generate("<KeyRelease>")` 在本机 Tk 上不触发 widget 绑定
+   （最小复现确认，`when="now"` 亦然），冒烟直调 `_on_key_release`。
+
+### F2 特效「几乎不可以用」——两条线修复
+
+1. **暴露面**：引擎注册 15 项特效但 Swift UI 仅 7 个开关。补齐 8 项入口（画面调整/
+   裁剪/镜像/赛璐璐色阶/霓虹/双色调/背景去除/大头），带参数控件（滑杆/步进器/HEX 输入）；
+   `effectsParams()` 按引擎四阶段（几何→预处理→网格→图纸）排序。
+   回归：`EffectsExposureTests`（15 项装配/参数携带/全开真实引擎生成）。
+2. **输出质量（探针逐项目检 + 像素 diff 量化）**：
+   - **色卡匹配升级 CIELAB 感知色距**（`core/colors.py`，原加权 RGB）：
+     渐变区噪点消失（测试图 35→33 色）、抖动的饱和色错色相噪点（红球绿斑）修复；
+     `closest_indices`/`closest_indices_dithered`/`find_closest_color` 全部迁 Lab，
+     误差扩散在 Lab 空间并 clamp。
+   - 邻接描边 `outline_outer` 默认 True→False（细节图实测 58% 像素被描黑成网）；
+   - 线稿描边 threshold 默认 100→40（原 0.9% 像素生效，几乎不可见）；
+   - 赛璐璐只对亮度分桶 → 输出灰度图（语义错误），改 RGB 逐通道色阶保留色相；
+   - 限色/风格色板的色间映射同步 Lab。
+   - 输出变化属有意行为修正，golden 基准已按项目流程重生成
+     （`update_golden.py --matrix`，8 配置）。
+
+### 观察项（非产品缺陷）
+
+- **套件并发陷阱**：run_tests 与 swift test 并发执行时互相失败（swift 引擎子进程写共享
+  `output/` 并触发裁剪，会删掉对方刚生成的中间产物）——本轮实测 2 项假失败，单独跑全绿。
+  已写入 ARCHITECTURE.md：套件必须顺序执行。
+- XCUITest runner 偶发 "Timed out while enabling automation mode"（系统级抖动，
+  重跑恢复）。
+- 邻接描边在多色细节图上仍是网状（「所有相邻异色对画线」的语义本质），建议配合限色数
+  使用，已记入已知限制。
+
+## 门禁结果（全部由本轮独立执行，顺序运行）
+
+| 套件 | 结果 |
+|---|---|
+| `tests/run_tests.py`（含 WYSIWYG 矩阵等新增回归 7 项） | 214/214 ✅ |
+| `tests/gui_smoke.py`（含 Tk 实时联动 3 项） | 92/92 ✅ |
+| `tests/stress_protocol.py` | 12/12 ✅ |
+| `swift test`（含特效暴露/ WYSIWYG 新增 5 项） | 78/78 ✅ |
+| XCUITest（U4-U7：逐键联动/切比例重联动/源图比联动/回车后续编辑） | 见下方补记 |
+
+## 环境与边界
+
+- 引擎测试环境：conda `pindou`（Python 3.11.15 / Pillow 12.3 / numpy 2.4.6 / opencv 4.14）。
+- 全程读写限于项目文件夹内；xcodebuild DerivedData 钉在 `app/.derivedData`。
+- 探针脚本 `tests/probe_*.py` 为临时产物（结论已并入正式回归），提交前删除。

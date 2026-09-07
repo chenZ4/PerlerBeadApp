@@ -107,14 +107,7 @@ final class SmokeUITests: XCTestCase {
         let app = launchApp()
         XCTAssertTrue(waitForSetup(app))
         // 切到固定比例 1:1（该模式下宽=高，断言明确）
-        let ratioPopup = app.popUpButtons.matching(
-            NSPredicate(format: "value == '原始比例'")).firstMatch
-        XCTAssertTrue(ratioPopup.waitForExistence(timeout: 15), "比例选择器未出现")
-        ratioPopup.click()
-        let item = app.menuItems.matching(
-            NSPredicate(format: "title == '1:1' OR label == '1:1'")).firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "比例菜单未找到 1:1")
-        item.click()
+        let ratioPopup = selectRatio(app, from: "原始比例", to: "1:1")
 
         let wField = app.textFields.matching(
             NSPredicate(format: "placeholderValue == '宽 (颗)'")).firstMatch
@@ -133,6 +126,95 @@ final class SmokeUITests: XCTestCase {
         wField.typeText("0")
         XCTAssertEqual(hField.value as? String, "60",
                        "第二个字符后仍应逐键联动（无回车）")
+
+        // U6 回归：切换比例立即按新比例重联动（1:1 的 60 → 4:3 的高 45）
+        selectRatio(app, from: "1:1", to: "4:3")
+        XCTAssertEqual(hField.value as? String, "45",
+                       "切到 4:3 后应按宽 60 立即重联动高=45")
+        _ = ratioPopup
         app.terminate()
+    }
+
+    // U5. 原始比例 + 已选图：按源图比例实时联动（模板 7×10 → aspect 0.7）
+    func testOriginalRatioLinksByTemplateAspect() throws {
+        let app = launchApp()
+        XCTAssertTrue(waitForSetup(app))
+        guard engineAvailable(app) else { throw XCTSkip("无 Python 引擎环境") }
+        loadTemplate(app, name: "草莓")
+
+        let wField = app.textFields.matching(
+            NSPredicate(format: "placeholderValue == '宽 (颗)'")).firstMatch
+        let hField = app.textFields.matching(
+            NSPredicate(format: "placeholderValue == '高 (颗)'")).firstMatch
+        XCTAssertTrue(wField.waitForExistence(timeout: 5))
+        // 模板加载后默认宽高 7×10；改宽 20 → 高 = round(20×10/7) = 29
+        wField.click()
+        wField.doubleClick()
+        wField.typeKey("a", modifierFlags: .command)
+        wField.typeText("20")
+        XCTAssertEqual(hField.value as? String, "29",
+                       "原始比例应按模板 7:10 实时联动高=29，实际 \(hField.value ?? "nil")")
+        app.terminate()
+    }
+
+    // U7. 回车提交后继续编辑仍联动（提交/回声状态不破坏后续输入）
+    func testLinkageSurvivesSubmitAndRetype() throws {
+        let app = launchApp()
+        XCTAssertTrue(waitForSetup(app))
+        selectRatio(app, from: "原始比例", to: "1:1")
+        let wField = app.textFields.matching(
+            NSPredicate(format: "placeholderValue == '宽 (颗)'")).firstMatch
+        let hField = app.textFields.matching(
+            NSPredicate(format: "placeholderValue == '高 (颗)'")).firstMatch
+        XCTAssertTrue(wField.waitForExistence(timeout: 5))
+
+        wField.click()
+        wField.doubleClick()
+        wField.typeKey("a", modifierFlags: .command)
+        wField.typeText("9")
+        XCTAssertEqual(hField.value as? String, "9")
+        wField.typeKey("\r", modifierFlags: [])   // 回车提交（规范化 + 联动）
+        XCTAssertEqual(hField.value as? String, "9", "回车提交后联动值保持")
+
+        wField.typeKey("a", modifierFlags: .command)
+        wField.typeText("12")
+        XCTAssertEqual(hField.value as? String, "12",
+                       "回车后继续输入仍应实时联动")
+        app.terminate()
+    }
+
+    // MARK: - 选择器辅助
+
+    /// 把比例下拉从 currentValue 切到 target，返回该 popup
+    @discardableResult
+    private func selectRatio(_ app: XCUIApplication, from currentValue: String,
+                             to target: String) -> XCUIElement {
+        let popup = app.popUpButtons.matching(
+            NSPredicate(format: "value == %@", currentValue)).firstMatch
+        XCTAssertTrue(popup.waitForExistence(timeout: 15), "比例选择器未出现")
+        popup.click()
+        let item = app.menuItems.matching(
+            NSPredicate(format: "title == %@ OR label == %@", target, target)).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "比例菜单未找到 \(target)")
+        item.click()
+        return popup
+    }
+
+    /// 打开模板菜单并选择名称含 name 的模板
+    private func loadTemplate(_ app: XCUIApplication, name: String) {
+        let tplPopup = app.popUpButtons.matching(
+            NSPredicate(format: "value == '自定义'")).firstMatch
+        XCTAssertTrue(tplPopup.waitForExistence(timeout: 20), "模板选择器未出现")
+        tplPopup.click()
+        let item = app.menuItems.matching(
+            NSPredicate(format: "title CONTAINS %@ OR label CONTAINS %@",
+                        name, name)).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "模板菜单未找到 \(name)")
+        item.click()
+        // 等模板加载：模板 Picker 值不再等于「自定义」
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline && tplPopup.value as? String == "自定义" {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
     }
 }
