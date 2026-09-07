@@ -186,15 +186,15 @@ final class GridModeTests: XCTestCase {
         XCTAssertEqual(vm.gridH, "25", "等比完整应按源图 2:1 联动高")
     }
 
-    // 工况#4：无图时不联动
-    func testOriginalRatioNoImageNoLink() {
+    // 工况#4：无图时按 1:1 兜底联动（主诉回归：改一侧另一侧必须动）
+    func testOriginalRatioNoImageLinksSquare() {
         vm.imageAspect = nil
         vm.ratioMode = "原始比例"
         vm.gridW = "30"
         vm.gridH = "44"
         vm.gridFieldEdited("w")
         XCTAssertEqual(vm.gridW, "30")
-        XCTAssertEqual(vm.gridH, "44", "无图时原始比例不联动")
+        XCTAssertEqual(vm.gridH, "30", "无图时原始比例按 1:1 兜底联动")
     }
 
     // 换图后 aspect 更新（2:1 图 → 1:2 竖图）

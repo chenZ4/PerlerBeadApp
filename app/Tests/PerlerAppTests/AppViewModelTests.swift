@@ -49,6 +49,28 @@ final class AppViewModelTests: XCTestCase {
         return tmp
     }
 
+    /// 左红右蓝双色图（邻接描边机制验证用）
+    private func makeTwoColorImage(_ w: Int = 160, _ h: Int = 120) -> String {
+        let tmp = NSTemporaryDirectory() + "perler_vm_\(UUID().uuidString).png"
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w,
+                                         pixelsHigh: h, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true,
+                                         isPlanar: false, colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0),
+              let ctx = NSGraphicsContext(bitmapImageRep: rep) else { return tmp }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = ctx
+        NSColor.systemRed.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: w / 2, height: h)).fill()
+        NSColor.systemBlue.setFill()
+        NSBezierPath(rect: NSRect(x: w / 2, y: 0, width: w / 2, height: h)).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: tmp))
+        }
+        return tmp
+    }
+
     // 场景 1: 启动
     func testStartup() {
         XCTAssertTrue(vm.engine != nil, "引擎应就绪")
@@ -94,6 +116,7 @@ final class AppViewModelTests: XCTestCase {
 
     // 场景 4: 特效描边
     func testOutlineEffect() {
+        // 新默认不描外轮廓：纯色图不应产生任何描边格（旧默认会整圈描黑）
         let src = makeTestImage()
         vm.setImagePath(src)
         vm.outlineCellOn = true
@@ -102,7 +125,18 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(waitFor({ self.vm.lastResult != nil }), "生成完成")
         let stats = vm.lastResult?.colorStats ?? [:]
         let dark = stats.values.filter { $0.rgb.reduce(0, +) < 200 }
-        XCTAssertFalse(dark.isEmpty, "描边特效应产生深色描边格")
+        XCTAssertTrue(dark.isEmpty, "纯色图 + 默认参数不应有描边格：\(dark.prefix(3))")
+
+        // 双色图相邻边界应产生描边格（机制覆盖；外轮廓由引擎层用例覆盖）
+        let two = makeTwoColorImage()
+        vm.setImagePath(two)
+        vm.outlineCellOn = true
+        vm.gridW = "30"; vm.gridH = "30"
+        vm.generate()
+        XCTAssertTrue(waitFor({ self.vm.lastResult != nil }), "双色图生成完成")
+        let stats2 = vm.lastResult?.colorStats ?? [:]
+        let dark2 = stats2.values.filter { $0.rgb.reduce(0, +) < 200 }
+        XCTAssertFalse(dark2.isEmpty, "双色图边界应产生描边格")
     }
 
     // 场景 5: 编辑换色生效

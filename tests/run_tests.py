@@ -14,6 +14,8 @@ from core.colors import get_palette, PALETTE_OPTIONS
 from core.history_manager import HistoryManager, HISTORY_FILE
 from core.processor import ImageProcessor
 
+import numpy as np  # Lab 暴力法校验用
+
 RESULT = {"passed": 0, "failed": 0, "errors": []}
 TEST_DIR = tempfile.mkdtemp(prefix="perler_test_")
 OUT_DIR = os.path.join(TEST_DIR, "out")
@@ -153,17 +155,16 @@ def test_colors_numpy():
             px[x, y] = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
     idx = p.closest_indices(img)
     mismatch = 0
-    wr, wg, wb = (0.299, 0.587, 0.114)
+    from core.colors import rgb_to_lab
+    px_lab = rgb_to_lab(np.asarray(img, dtype=np.float32))
     for y in range(60):
         for x in range(60):
-            r, g, b = px[x, y]
+            lab = px_lab[y, x]
             best = min(range(len(p.colors)),
-                       key=lambda i: (r - p.colors[i][0]) ** 2 * wr
-                       + (g - p.colors[i][1]) ** 2 * wg
-                       + (b - p.colors[i][2]) ** 2 * wb)
+                       key=lambda i: float(((p.lab[i] - lab) ** 2).sum()))
             if idx[y, x] != best:
                 mismatch += 1
-    report("numpy 加权匹配与暴力法 100% 一致", mismatch == 0, f"mismatch={mismatch}")
+    report("numpy Lab 匹配与暴力法 100% 一致", mismatch == 0, f"mismatch={mismatch}")
 
 
 def test_pdf():
@@ -352,6 +353,16 @@ def test_models():
     report("link 9:16 高编辑", link_dimensions('h', 5, 16, "9:16") == (9, 16))
     report("link 非固定比例不动", link_dimensions('w', 40, 29, RATIO_ORIGINAL) == (40, 29))
     report("link 自定义不动", link_dimensions('h', 40, 29, RATIO_CUSTOM) == (40, 29))
+    # 半上舍入：4.5 必须向上=5（与 Swift .rounded() 一致；旧 round() 银行家舍入得 4）
+    report("link 4:3 半上舍入", link_dimensions('w', 6, 1, "4:3") == (6, 5),
+           str(link_dimensions('w', 6, 1, "4:3")))
+    # 按源图比例联动（与 Swift 实时联动对齐）：4:3 源图 aspect=4/3
+    report("link 原始比例按源图比联动宽", link_dimensions('w', 40, 1, RATIO_ORIGINAL,
+                                                          aspect=4 / 3) == (40, 30))
+    report("link 等比完整按源图比联动高", link_dimensions('h', 1, 30, RATIO_FIT_BOX,
+                                                          aspect=4 / 3) == (40, 30))
+    report("link 原始比例无图不联动", link_dimensions('w', 40, 29, RATIO_ORIGINAL,
+                                                      aspect=None) == (40, 29))
 
     # 输入钳制
     report("parse_grid_w 合法", parse_grid_w("40") == 40)
@@ -741,13 +752,29 @@ def test_effects():
     report("8 个特效全部注册", expected_ids <= registered,
            f"missing={expected_ids - registered}")
 
-    # 邻接描边：描边色（近黑）出现在网格中
+    # 邻接描边：显式外轮廓（机制覆盖）——描边色（近黑）出现在网格中
     r = proc.process_image(src, 40, 40, cell_size=40, save=False,
-                           effects=[{"id": "outline_cell", "params": {}}])
+                           effects=[{"id": "outline_cell",
+                                     "params": {"outline_outer": True}}])
     stats = r.color_stats
     black_codes = [c for c, i in stats.items() if sum(i['rgb']) < 200]
     report("邻接描边产生描边色", len(black_codes) > 0, str(black_codes))
     r.chart.close()
+
+    # 新默认不描外轮廓：纯色图 + 默认参数 → 仅 1 种颜色（旧默认会出现黑圈）
+    flat_src = os.path.join(TEST_DIR, "flat.png")
+    Image.new("RGB", (60, 60), (30, 120, 220)).save(flat_src)
+    r = proc.process_image(flat_src, 12, 12, cell_size=20, save=False,
+                           effects=[{"id": "outline_cell", "params": {}}])
+    report("邻接描边默认不描外轮廓（纯色图仍 1 色）", len(r.color_stats) == 1,
+           str(list(r.color_stats)))
+    r2 = proc.process_image(flat_src, 12, 12, cell_size=20, save=False,
+                            effects=[{"id": "outline_cell",
+                                      "params": {"outline_outer": True}}])
+    report("邻接描边显式外轮廓生效（纯色图 2 色）", len(r2.color_stats) == 2,
+           str(list(r2.color_stats)))
+    r.chart.close()
+    r2.chart.close()
 
     # 线稿描边（跨阶段）
     r = proc.process_image(src, 40, 40, cell_size=40, save=False,
@@ -830,7 +857,10 @@ def test_effects():
     print("    特效库 v2:")
     r = proc.process_image(src, 30, 30, cell_size=40, save=False,
                            effects=[{"id": "cel_shade", "params": {"levels": 4}}])
-    report("赛璐璐色阶正常输出", r is not None)
+    colored = any(sum(i['rgb']) > 60 and max(i['rgb']) - min(i['rgb']) > 30
+                  for i in r.color_stats.values())
+    report("赛璐璐色阶正常输出且保留色相", r is not None and colored,
+           f"stats={list(r.color_stats)[:3]}")
     r.chart.close()
 
     r = proc.process_image(src, 30, 30, cell_size=40, save=False,
@@ -1202,6 +1232,43 @@ def test_robustness():
             close()
 
 
+def test_wysiwyg_link():
+    """WYSIWYG 回归：UI 实时联动配对必须被引擎原样生效（主诉：联动没解决）"""
+    print("== 测试10: WYSIWYG 联动一致性（UI 公式 vs 引擎最终网格） ==")
+    import math
+    proc = ImageProcessor()
+    probe_dir = os.path.join(OUT_DIR, "wysiwyg")
+    os.makedirs(probe_dir, exist_ok=True)
+
+    def ui_link(source, w, h, aspect):
+        if source == "w":
+            return w, max(1, math.floor(w / aspect + 0.5))
+        return max(1, math.floor(h * aspect + 0.5)), h
+
+    aspects = [2.0, 1.618, 1.5, 4 / 3, 1.0, 0.75, 2 / 3, 0.5]
+    sizes = [29, 40, 87]
+    mismatch = []
+    for aspect in aspects:
+        src = os.path.join(probe_dir, f"src_{aspect:.3f}.png")
+        Image.new("RGB", (1000, max(1, round(1000 / aspect))), (120, 30, 90)).save(src)
+        for mode_fit in (False, True):
+            for source in ("w", "h"):
+                for base in sizes:
+                    uw, uh = ui_link(source, base, base, aspect)
+                    r = proc.process_image(src, uw, uh, cell_size=16,
+                                           fit_box=mode_fit, save=False,
+                                           show_finished=False,
+                                           show_color_legend=False,
+                                           show_row_col_labels=False)
+                    if r is None or (r.grid_w, r.grid_h) != (uw, uh):
+                        mismatch.append(f"aspect={aspect:.3f} fit={mode_fit} "
+                                        f"edit={source} {uw}x{uh}→"
+                                        f"{r.grid_w if r else None}x{r.grid_h if r else None}")
+        os.remove(src)
+    report("WYSIWYG：联动值=引擎值（96 组合）", not mismatch,
+           f"mismatch={len(mismatch)}: {mismatch[:3]}")
+
+
 def test_output_prune():
     print("== 测试9: output 裁剪（防无限增长） ==")
     import json
@@ -1353,6 +1420,7 @@ def main():
     test_effects()
     test_stage3()
     test_output_prune()
+    test_wysiwyg_link()
     test_robustness()
     print("\n=== 结果汇总 ===")
     print(f"通过: {RESULT['passed']}   失败: {RESULT['failed']}")
