@@ -2,22 +2,17 @@
 import numpy as np
 from PIL import Image, ImageFilter
 
-from ..colors import weighted_distance, hex_to_rgb_safe
+from ..colors import hex_to_rgb_safe, rgb_to_lab
 from .base import EffectSpec
 from .registry import register
 
 
 def _outline_index(palette, color):
-    """把描边色 hex 转为色卡最近索引（加权距离）"""
-    target = hex_to_rgb_safe(color, (26, 26, 26))
-    best = 0
-    best_d = float('inf')
-    for i, c in enumerate(palette.colors):
-        d = weighted_distance(target, c)
-        if d < best_d:
-            best_d = d
-            best = i
-    return best
+    """把描边色 hex 转为色卡最近索引（CIELAB 感知距离）"""
+    rgb = hex_to_rgb_safe(color, (26, 26, 26))
+    target = rgb_to_lab(np.array([[rgb]], dtype=np.float32))[0]
+    d = palette.lab - target
+    return int(np.argmin((d * d).sum(-1)))
 
 
 def _apply_outline(idx, params, ctx):
@@ -61,7 +56,9 @@ register(EffectSpec(
     params={
         "color": {"type": "color", "default": "#1A1A1A"},
         "width": {"type": "int", "default": 1, "min": 1, "max": 3},
-        "outline_outer": {"type": "bool", "default": True},
+        # 默认不描外轮廓：细节丰富的图上「所有相邻异色对 + 外圈」会形成
+        # 全图黑网（实测 58% 像素被改写），外轮廓交给用户按需开启
+        "outline_outer": {"type": "bool", "default": False},
     },
     description="像素邻接描边：相邻不同色格子之间画描边线",
 ), _apply_outline)
@@ -107,7 +104,8 @@ register(EffectSpec(
     name="线稿描边",
     category="preprocess",
     params={
-        "threshold": {"type": "int", "default": 100, "min": 10, "max": 250},
+        # 100 时渐变/柔和边缘几乎全部漏检（实测仅 0.9% 像素生效），降低到 40
+        "threshold": {"type": "int", "default": 40, "min": 10, "max": 250},
         "color": {"type": "color", "default": "#1A1A1A"},
         "width": {"type": "int", "default": 1, "min": 1, "max": 3},
     },

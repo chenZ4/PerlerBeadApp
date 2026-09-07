@@ -8,13 +8,17 @@ from .registry import register
 
 
 def _cel_shade(img, params, ctx):
-    """赛璐璐：亮度分桶色阶化，漫画风"""
+    """赛璐璐：逐通道色阶化（保留色相），漫画平涂风
+
+    旧实现只对亮度分桶会丢失色相变成灰度图，与「赛璐璐」语义不符；
+    改为 RGB 各自分桶，色相保留、渐变变平涂色块。
+    """
     levels = int(params.get("levels", 4))
     levels = max(2, min(levels, 16))
-    arr = np.asarray(img.convert("L"), dtype=np.float32)
+    arr = np.asarray(img.convert("RGB"), dtype=np.float32)
     bucket = np.floor(arr / (256.0 / levels)) * (256.0 / levels)
     out = np.clip(bucket, 0, 255).astype(np.uint8)
-    return Image.fromarray(np.repeat(out[:, :, None], 3, axis=2))
+    return Image.fromarray(out)
 
 
 register(EffectSpec(
@@ -22,7 +26,7 @@ register(EffectSpec(
     name="赛璐璐色阶",
     category="preprocess",
     params={"levels": {"type": "int", "default": 4, "min": 2, "max": 16}},
-    description="亮度分桶色阶化，漫画赛璐璐风格",
+    description="RGB 逐通道色阶化（保留色相），漫画赛璐璐平涂风格",
 ), _cel_shade)
 
 

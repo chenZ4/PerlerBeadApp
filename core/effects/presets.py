@@ -1,7 +1,7 @@
 # core/effects/presets.py - 限色数与风格色板预设
 import numpy as np
 
-from ..colors import RGB_WEIGHTS
+from ..colors import rgb_to_lab
 from .base import EffectSpec
 from .registry import register
 
@@ -50,15 +50,13 @@ def _max_colors(idx, params, ctx):
         return out.reshape(idx.shape)
     counts = np.bincount(valid, minlength=len(palette.colors))
     top = np.argsort(counts)[::-1][:limit]
-    wr, wg, wb = RGB_WEIGHTS
-    colors = np.asarray(palette.colors, dtype=np.float32)
-    top_colors = colors[top]
-    for i, orig in enumerate(valid):
-        if orig in top:
-            continue
-        c = colors[orig]
-        d = ((top_colors - c) ** 2 * np.asarray([wr, wg, wb])).sum(-1)
-        valid[i] = top[int(d.argmin())]
+    top_lab = palette.lab[top]
+    outside = ~np.isin(valid, top)
+    if outside.any():
+        # 被淘汰的色 → Lab 感知距离最近的保留色
+        src_lab = palette.lab[valid[outside]]
+        d = ((src_lab[:, None, :] - top_lab[None, :, :]) ** 2).sum(-1)
+        valid[outside] = top[d.argmin(-1)]
     out[~empty] = valid
     return out.reshape(idx.shape)
 
@@ -80,17 +78,14 @@ def _preset(idx, params, ctx):
     preset = PRESETS.get(preset_name)
     if not preset:
         return idx
-    wr, wg, wb = RGB_WEIGHTS
-    target = np.asarray(preset["colors"], dtype=np.float32)
-    colors = np.asarray(palette.colors, dtype=np.float32)
-    # 预设色 → 色卡最近索引
-    d = ((target[:, None, :] - colors[None, :, :]) ** 2
-         * np.asarray([wr, wg, wb])).sum(-1)
+    target_lab = rgb_to_lab(np.asarray(preset["colors"], dtype=np.float32))
+    pal_lab = palette.lab
+    # 预设色 → 色卡最近索引（CIELAB 感知距离）
+    d = ((target_lab[:, None, :] - pal_lab[None, :, :]) ** 2).sum(-1)
     subset = d.argmin(-1)  # 每个预设色的色卡索引（可能有重复）
     subset = list(dict.fromkeys(int(i) for i in subset))
     # 每个色卡色 → 最近预设色
-    d2 = ((colors[:, None, :] - target[None, :, :]) ** 2
-          * np.asarray([wr, wg, wb])).sum(-1)
+    d2 = ((pal_lab[:, None, :] - target_lab[None, :, :]) ** 2).sum(-1)
     map_to_preset = d2.argmin(-1)  # 色卡索引 → 预设索引
     subset_idx = np.asarray(subset, dtype=np.int32)
     flat = idx.reshape(-1)

@@ -2,13 +2,46 @@
 import json
 import os
 
+import numpy as np
+
 from .models import hex_to_rgb_safe  # noqa: F401  (re-export for effects)
 
 # 感知加权 RGB（人眼敏感度）：R 0.299 / G 0.587 / B 0.114
+# 保留给旧调用方（UI 兼容层）；色卡匹配已升级为 CIELAB 距离（感知均匀，
+# 修复饱和色映错色相/渐变区噪点，见 closest_indices）
 RGB_WEIGHTS = (0.299, 0.587, 0.114)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PALETTE_DIR = os.path.join(BASE_DIR, "data", "palettes")
+
+# CIELAB 常量（D65 白点）
+_SRGB_TO_XYZ = np.array([[0.4124564, 0.3575761, 0.1804375],
+                         [0.2126729, 0.7151522, 0.0721750],
+                         [0.0193339, 0.1191920, 0.9503041]], dtype=np.float32)
+_WHITE_D65 = np.array([0.95047, 1.0, 1.08883], dtype=np.float32)
+_LAB_MIN = np.array([0.0, -128.0, -128.0], dtype=np.float32)
+_LAB_MAX = np.array([100.0, 127.0, 127.0], dtype=np.float32)
+
+
+def _srgb_to_linear(c):
+    """sRGB 伽马 → 线性 RGB（c: 0..1）"""
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def rgb_to_lab(arr):
+    """RGB(0..255, ...,3) → CIELAB（D65），向量化任意形状"""
+    c = np.asarray(arr, dtype=np.float32) / 255.0
+    lin = _srgb_to_linear(np.clip(c, 0.0, 1.0))
+    xyz = lin @ _SRGB_TO_XYZ.T / _WHITE_D65
+    delta = 6 / 29
+    f = np.where(xyz > delta ** 3,
+                 np.cbrt(xyz),
+                 xyz / (3 * delta * delta) + 4 / 29)
+    lab = np.empty_like(f)
+    lab[..., 0] = 116 * f[..., 1] - 16
+    lab[..., 1] = 500 * (f[..., 0] - f[..., 1])
+    lab[..., 2] = 200 * (f[..., 1] - f[..., 2])
+    return lab
 
 # 兜底色卡（数据目录缺失/全部损坏时）
 _FALLBACK = {
@@ -105,6 +138,13 @@ class ColorPalette:
         self.names = list(data["names"])
         self.codes = list(data["codes"])
         self._hex_codes = [self._rgb_to_hex(rgb) for rgb in self.colors]
+        # 色卡 Lab 预计算（感知色距匹配用）
+        self._lab = rgb_to_lab(np.asarray(self.colors, dtype=np.float32))
+
+    @property
+    def lab(self):
+        """色卡 CIELAB 数组 (K,3)"""
+        return self._lab
 
     def _rgb_to_hex(self, rgb):
         """RGB 转 HEX"""
@@ -116,49 +156,44 @@ class ColorPalette:
         return self._hex_codes
 
     def closest_indices(self, pil_img):
-        """numpy 向量化加权最近色匹配，返回 (H,W) 色卡索引数组，零误差"""
-        import numpy as np
+        """CIELAB 感知色距最近色匹配，返回 (H,W) 色卡索引数组"""
         if pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")
-        w = np.asarray(RGB_WEIGHTS, dtype=np.float32)
-        colors = np.asarray(self.colors, dtype=np.float32)
-        arr = np.asarray(pil_img, dtype=np.float32)
-        h, w_, _ = arr.shape
-        flat = arr.reshape(-1, 3)
+        lab = rgb_to_lab(np.asarray(pil_img, dtype=np.float32))
+        h, w_, _ = lab.shape
+        flat = lab.reshape(-1, 3)
         out = np.empty(flat.shape[0], dtype=np.int32)
         step = 8192
+        pal = self._lab
         for start in range(0, flat.shape[0], step):
             chunk = flat[start:start + step]
-            diff = chunk[:, None, :] - colors[None, :, :]
-            out[start:start + chunk.shape[0]] = ((diff * diff) * w).sum(-1).argmin(-1)
+            diff = chunk[:, None, :] - pal[None, :, :]
+            out[start:start + chunk.shape[0]] = (diff * diff).sum(-1).argmin(-1)
         return out.reshape(h, w_)
 
     def closest_indices_dithered(self, pil_img, strength=1.0):
-        """Floyd-Steinberg 误差扩散匹配：渐变更柔和，返回 (H,W) 索引矩阵
+        """Floyd-Steinberg 误差扩散匹配（CIELAB 空间）：渐变更柔和，返回 (H,W) 索引矩阵
 
-        距离用展开式 w·c² - 2p·(w·c) 计算（省掉逐像素广播平方），
-        误差累加后按像素 clamp 到 [0,255]，防止极端参数下漂移。
+        误差在 Lab 空间累加并 clamp 到合法域，防止极端参数下漂移；
+        渐变区噪点与饱和色映错色相由感知均匀的 Lab 距离修复。
         """
-        import numpy as np
         if pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")
-        weights = np.asarray(RGB_WEIGHTS, dtype=np.float32)
-        colors = np.asarray(self.colors, dtype=np.float32)      # (K,3)
-        wc = colors * weights                                    # (K,3)
-        color_norms = (colors * colors * weights).sum(-1)        # (K,)
-        arr = np.asarray(pil_img, dtype=np.float32).copy()
+        arr = rgb_to_lab(np.asarray(pil_img, dtype=np.float32))
+        arr = arr.copy()
         h, w_, _ = arr.shape
         out = np.empty((h, w_), dtype=np.int32)
+        pal = self._lab
         scale = float(strength)
         for y in range(h):
             row = arr[y]
             for x in range(w_):
                 px = row[x]
-                np.clip(px, 0.0, 255.0, out=px)
-                # argmin(w·c² - 2p·wc)：w·p² 对候选是常数，可省略
-                idx = int(np.argmin(color_norms - 2.0 * px.dot(wc.T)))
+                np.clip(px, _LAB_MIN, _LAB_MAX, out=px)
+                d = pal - px
+                idx = int(np.argmin((d * d).sum(-1)))
                 out[y, x] = idx
-                err = (px - colors[idx]) * scale
+                err = (px - pal[idx]) * scale
                 if x + 1 < w_:
                     row[x + 1] += err * (7 / 16)
                 if y + 1 < h:
@@ -171,15 +206,10 @@ class ColorPalette:
         return out
 
     def find_closest_color(self, r, g, b):
-        """找到色卡中最接近的颜色（加权距离，备用路径）"""
-        min_dist = float('inf')
-        closest_index = 0
-
-        for i, color in enumerate(self.colors):
-            dist = weighted_distance((r, g, b), color)
-            if dist < min_dist:
-                min_dist = dist
-                closest_index = i
+        """找到色卡中最接近的颜色（CIELAB 距离，备用路径）"""
+        lab = rgb_to_lab(np.array([[(r, g, b)]], dtype=np.float32))[0]
+        d = self._lab - lab
+        closest_index = int(np.argmin((d * d).sum(-1)))
 
         return (self.colors[closest_index],
                 self.names[closest_index],

@@ -98,7 +98,10 @@ final class AppViewModel: ObservableObject {
             return source == "w" ? (w, max(1, Int((Double(w) * 16 / 9).rounded())))
                                  : (max(1, Int((Double(h) * 9 / 16).rounded())), h)
         case "原始比例", "等比完整":
-            guard let ar = aspect, ar > 0 else { return (w, h) }
+            // 无图/aspect 读取失败时按 1:1 兜底：用户改一侧另一侧必须动（WYSIWYG），
+            // 选图后真实 aspect 立即接管（主诉：改宽/高另一侧不动）
+            let ar = aspect ?? 1.0
+            guard ar > 0 else { return (w, h) }
             if source == "w" {
                 return (w, max(1, Int((Double(w) / ar).rounded())))
             }
@@ -162,6 +165,31 @@ final class AppViewModel: ObservableObject {
     @Published var maxColorsValue = 12
     @Published var presetOn = false
     @Published var presetName = "pastel"
+
+    // 特效库 v2 补齐（此前引擎已支持但 UI 无入口）
+    @Published var adjustOn = false
+    @Published var adjustBrightness = 1.0
+    @Published var adjustContrast = 1.0
+    @Published var adjustSaturation = 1.2   // 打开时默认即可感知，避免「开了没效果」
+    @Published var mirrorOn = false
+    @Published var mirrorDirection = "horizontal"
+    @Published var cropOn = false
+    @Published var cropX0 = 0.0
+    @Published var cropY0 = 0.0
+    @Published var cropX1 = 1.0
+    @Published var cropY1 = 1.0
+    @Published var bgRemoveOn = false
+    @Published var bgRemoveColor = "#FFFFFF"
+    @Published var bgRemoveTolerance = 30
+    @Published var celShadeOn = false
+    @Published var celShadeLevels = 4
+    @Published var neonOn = false
+    @Published var neonSaturation = 1.5
+    @Published var neonDarkness = 0.75
+    @Published var duotoneOn = false
+    @Published var duotoneColor1 = "#1E1E1E"
+    @Published var duotoneColor2 = "#F0F0F0"
+    @Published var chibiOn = false
 
     // MARK: 结果
     @Published var chartImage: NSImage?
@@ -350,13 +378,47 @@ final class AppViewModel: ObservableObject {
     // MARK: - 生成
     func effectsParams() -> [[String: Any]] {
         var effects: [[String: Any]] = []
-        if outlineCellOn { effects.append(["id": "outline_cell", "params": [:] as [String: Any]]) }
-        if outlineEdgeOn { effects.append(["id": "outline_edge", "params": [:] as [String: Any]]) }
+        // 几何 → 预处理 → 网格 → 图纸 的顺序与引擎四阶段一致（同阶段内按列表序）
+        if chibiOn { effects.append(["id": "chibi", "params": [:] as [String: Any]]) }
+        if mirrorOn { effects.append(["id": "mirror", "params": ["direction": mirrorDirection]]) }
+        if cropOn {
+            effects.append(["id": "crop", "params": [
+                "x0": (cropX0 * 1000).rounded() / 1000,
+                "y0": (cropY0 * 1000).rounded() / 1000,
+                "x1": (cropX1 * 1000).rounded() / 1000,
+                "y1": (cropY1 * 1000).rounded() / 1000,
+            ]])
+        }
         if grayscaleOn { effects.append(["id": "grayscale", "params": [:] as [String: Any]]) }
+        if adjustOn {
+            effects.append(["id": "adjust", "params": [
+                "brightness": adjustBrightness,
+                "contrast": adjustContrast,
+                "saturation": adjustSaturation,
+            ]])
+        }
+        if celShadeOn { effects.append(["id": "cel_shade", "params": ["levels": celShadeLevels]]) }
+        if neonOn {
+            effects.append(["id": "neon", "params": [
+                "saturation": neonSaturation, "darkness": neonDarkness,
+            ]])
+        }
+        if duotoneOn {
+            effects.append(["id": "duotone", "params": [
+                "color1": duotoneColor1, "color2": duotoneColor2,
+            ]])
+        }
+        if bgRemoveOn {
+            effects.append(["id": "bg_remove", "params": [
+                "color": bgRemoveColor, "tolerance": bgRemoveTolerance,
+            ]])
+        }
+        if outlineEdgeOn { effects.append(["id": "outline_edge", "params": [:] as [String: Any]]) }
         if ditherOn { effects.append(["id": "dither", "params": [:] as [String: Any]]) }
-        if darkChartOn { effects.append(["id": "dark_chart", "params": [:] as [String: Any]]) }
+        if outlineCellOn { effects.append(["id": "outline_cell", "params": [:] as [String: Any]]) }
         if maxColorsOn { effects.append(["id": "max_colors", "params": ["max": maxColorsValue]]) }
         if presetOn { effects.append(["id": "preset", "params": ["preset": presetName]]) }
+        if darkChartOn { effects.append(["id": "dark_chart", "params": [:] as [String: Any]]) }
         return effects
     }
 

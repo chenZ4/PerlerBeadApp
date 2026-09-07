@@ -96,6 +96,52 @@ struct ContentView: View {
                             Text("Cottagecore").tag("cottagecore")
                         }
                     }
+
+                    Divider()
+                    Toggle("画面调整", isOn: $vm.adjustOn)
+                    if vm.adjustOn {
+                        effectSlider("亮度", $vm.adjustBrightness, 0.5...1.5, step: 0.05)
+                        effectSlider("对比度", $vm.adjustContrast, 0.5...1.5, step: 0.05)
+                        effectSlider("饱和度", $vm.adjustSaturation, 0...2, step: 0.05)
+                    }
+                    Toggle("镜像", isOn: $vm.mirrorOn)
+                    if vm.mirrorOn {
+                        Picker("方向", selection: $vm.mirrorDirection) {
+                            Text("水平").tag("horizontal")
+                            Text("垂直").tag("vertical")
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+                    Toggle("裁剪", isOn: $vm.cropOn)
+                    if vm.cropOn {
+                        effectSlider("左", $vm.cropX0, 0...0.9, step: 0.05)
+                        effectSlider("上", $vm.cropY0, 0...0.9, step: 0.05)
+                        effectSlider("右", $vm.cropX1, 0.1...1, step: 0.05)
+                        effectSlider("下", $vm.cropY1, 0.1...1, step: 0.05)
+                    }
+                    Toggle("赛璐璐色阶", isOn: $vm.celShadeOn)
+                    if vm.celShadeOn {
+                        Stepper("色阶 \(vm.celShadeLevels) 级",
+                                value: $vm.celShadeLevels, in: 2...16)
+                    }
+                    Toggle("霓虹", isOn: $vm.neonOn)
+                    if vm.neonOn {
+                        effectSlider("饱和", $vm.neonSaturation, 1...2.5, step: 0.05)
+                        effectSlider("压暗", $vm.neonDarkness, 0.4...1, step: 0.05)
+                    }
+                    Toggle("双色调", isOn: $vm.duotoneOn)
+                    if vm.duotoneOn {
+                        hexField("暗部色", $vm.duotoneColor1)
+                        hexField("亮部色", $vm.duotoneColor2)
+                    }
+                    Toggle("背景去除", isOn: $vm.bgRemoveOn)
+                    if vm.bgRemoveOn {
+                        hexField("背景色", $vm.bgRemoveColor)
+                        Stepper("容差 \(vm.bgRemoveTolerance)",
+                                value: $vm.bgRemoveTolerance, in: 0...120)
+                    }
+                    Toggle("大头（Q版·需 OpenCV）", isOn: $vm.chibiOn)
                 }
 
                 glassSection("操作") {
@@ -146,6 +192,29 @@ struct ContentView: View {
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// 特效参数滑杆行：名称 + 滑杆 + 数值
+    private func effectSlider(_ title: String, _ value: Binding<Double>,
+                              _ range: ClosedRange<Double>, step: Double) -> some View {
+        HStack {
+            Text(title).font(.callout).frame(width: 48, alignment: .leading)
+            Slider(value: value, in: range, step: step)
+            Text(String(format: "%.2f", value.wrappedValue))
+                .font(.caption)
+                .monospacedDigit()
+                .frame(width: 38, alignment: .trailing)
+        }
+    }
+
+    /// 特效 HEX 颜色输入行
+    private func hexField(_ title: String, _ text: Binding<String>) -> some View {
+        HStack {
+            Text(title).font(.callout)
+            TextField("#RRGGBB", text: text)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 90)
+        }
     }
 
     // MARK: - 预览面板
