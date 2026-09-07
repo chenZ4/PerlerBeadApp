@@ -28,6 +28,11 @@ A4_MM = (210, 297)
 FINISHED_MAX_DIM = 4096
 
 
+def _round_half_up(x):
+    """半上舍入（对齐 Swift .rounded() 与产品语义；Python 内建 round 是银行家舍入）"""
+    return math.floor(x + 0.5)
+
+
 @dataclass
 class GenerateResult:
     save_path: str
@@ -116,23 +121,30 @@ class ImageProcessor:
                 img = apply_phase(effects, "preprocess", img, ctx)
                 orig_w, orig_h = img.size
 
-            # 1. 保持原始比例下采样
-            scale = min(grid_w / orig_w, grid_h / orig_h)
-            new_w = max(1, int(orig_w * scale))
-            new_h = max(1, int(orig_h * scale))
-
+            # 1. 最终网格：WYSIWYG 路由（UI 实时联动的配对必须原样生效）
+            # 候选 = 宽基准 / 高基准（保持源图比例，半上舍入对齐 UI 的 rounded()）
+            cand_w = (grid_w, max(1, _round_half_up(grid_w * orig_h / orig_w)))
+            cand_h = (max(1, _round_half_up(grid_h * orig_w / orig_h)), grid_h)
             if exact_grid:
                 final_grid_w = max(1, grid_w)
                 final_grid_h = max(1, grid_h)
             elif fit_box:
-                final_grid_w = new_w
-                final_grid_h = new_h
-            elif grid_w >= grid_h:
-                final_grid_w = grid_w
-                final_grid_h = max(1, int(grid_w * orig_h / orig_w))
+                if cand_w[0] == grid_w and cand_w[1] == grid_h:
+                    final_grid_w, final_grid_h = cand_w
+                elif cand_h[0] == grid_w and cand_h[1] == grid_h:
+                    final_grid_w, final_grid_h = cand_h
+                else:
+                    # 模糊请求（非联动对）：回退等比完整放入框内语义
+                    scale = min(grid_w / orig_w, grid_h / orig_h)
+                    final_grid_w = max(1, _round_half_up(orig_w * scale))
+                    final_grid_h = max(1, _round_half_up(orig_h * scale))
+            elif cand_w == (grid_w, grid_h):
+                final_grid_w, final_grid_h = cand_w
+            elif cand_h == (grid_w, grid_h):
+                final_grid_w, final_grid_h = cand_h
             else:
-                final_grid_h = grid_h
-                final_grid_w = max(1, int(grid_h * orig_w / orig_h))
+                # 模糊请求（非联动对）：保持文档语义「按原图比例（宽为基准）」
+                final_grid_w, final_grid_h = cand_w
 
             # BOX（面积平均）下采样：NEAREST 单像素采样在照片上噪声大
             small_img = img.resize((final_grid_w, final_grid_h), resample=Image.BOX)

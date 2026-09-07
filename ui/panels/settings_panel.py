@@ -38,6 +38,7 @@ class SettingsPanel:
         self._on_ratio_cb = lambda: None
         self._setting_cb = lambda save=True: None
         self._is_calculating = False
+        self._aspect = 1.0   # 源图宽高比，选图后由控制器更新
 
         # ===== 1. 图片源 =====
         section_title(parent, "📁 图片源")
@@ -67,6 +68,7 @@ class SettingsPanel:
         self.entry_w.grid(row=0, column=1, padx=5)
         self.entry_w.bind("<Return>", lambda e: self._on_enter('w'))
         self.entry_w.bind("<FocusOut>", lambda e: self._notify_dimension('w'))
+        self.entry_w.bind("<KeyRelease>", lambda e: self._on_key_release('w'))
 
         ttk.Label(frame_wh, text="高 (颗):").grid(row=0, column=2, padx=5, sticky=tk.W)
         self.entry_h = ttk.Entry(frame_wh, width=8)
@@ -74,6 +76,7 @@ class SettingsPanel:
         self.entry_h.grid(row=0, column=3, padx=5)
         self.entry_h.bind("<Return>", lambda e: self._on_enter('h'))
         self.entry_h.bind("<FocusOut>", lambda e: self._notify_dimension('h'))
+        self.entry_h.bind("<KeyRelease>", lambda e: self._on_key_release('h'))
 
         self.lbl_cm_hint = ttk.Label(parent, text="", foreground="gray")
         self.lbl_cm_hint.pack(anchor=tk.W, pady=(0, 5))
@@ -151,15 +154,43 @@ class SettingsPanel:
         self._notify_dimension(source)
 
     # ---------- 字段联动 ----------
+    def set_aspect(self, aspect):
+        """源图像素宽高比（iw/ih），由控制器在选图/加载历史时更新；无图 1.0（1:1 兜底）"""
+        self._aspect = aspect if aspect and aspect > 0 else 1.0
+
+    def _on_key_release(self, source):
+        """输入实时联动（对齐 Swift 版）：另一侧为合法整数才联动，且不回写正在编辑的框"""
+        if self._is_calculating:
+            return
+        try:
+            w = int(self.entry_w.get().strip())
+            h = int(self.entry_h.get().strip())
+        except (TypeError, ValueError):
+            return
+        nw, nh = link_dimensions(source, parse_grid_w(str(w)), parse_grid_h(str(h)),
+                                 self.ratio_var.get(), aspect=self._aspect)
+        self._is_calculating = True
+        try:
+            if source == 'w' and nh != h:
+                self.entry_h.delete(0, tk.END)
+                self.entry_h.insert(0, str(nh))
+            elif source == 'h' and nw != w:
+                self.entry_w.delete(0, tk.END)
+                self.entry_w.insert(0, str(nw))
+        finally:
+            self._is_calculating = False
+        self.update_cm_hint()
+
     def link_from(self, source):
-        """按比例联动另一维度（固定比例生效）"""
+        """按比例联动另一维度（失焦/回车/切比例时；固定比例按比例、原始比例按源图比）"""
         if self._is_calculating:
             return
         self._is_calculating = True
         try:
             w = parse_grid_w(self.entry_w.get())
             h = parse_grid_h(self.entry_h.get())
-            w, h = link_dimensions(source, w, h, self.ratio_var.get())
+            w, h = link_dimensions(source, w, h, self.ratio_var.get(),
+                                   aspect=self._aspect)
             self.set_grid(w, h)
         finally:
             self._is_calculating = False

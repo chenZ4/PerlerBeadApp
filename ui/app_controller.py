@@ -306,6 +306,7 @@ class AppController:
         self.settings_panel.lbl_file.config(
             text=os.path.basename(file_path), foreground="black")
         orig_w, orig_h = img.size
+        self.settings_panel.set_aspect(orig_w / orig_h)
         suggested_w = min(max(30, orig_w // 20), 80)
         params = self.state.params
         self.state.set_params(GenerateParams(
@@ -728,6 +729,7 @@ class AppController:
                 img = Image.open(image_path)
                 img.load()
                 self.state.replace_original_image(img)
+                self.settings_panel.set_aspect(img.size[0] / img.size[1])
             except Exception:
                 self.state.replace_original_image(None)
             self.preview_panel.clear_images()

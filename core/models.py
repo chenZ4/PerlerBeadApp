@@ -8,6 +8,7 @@
 """
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
+import math
 
 # ---------- 常量 ----------
 RATIO_ORIGINAL = "按原图比例（宽为基准）"
@@ -86,24 +87,38 @@ def as_bool(value, default=True):
     return default
 
 
-def link_dimensions(source, w, h, ratio):
-    """固定比例下按编辑来源联动另一维度（对齐 Tk 版双向联动行为）。
+def _round_half_up(x):
+    """半上舍入（对齐 Swift .rounded() 与引擎；Python 内建 round 是银行家舍入，
+    x.5 时会向下导致与 UI 显示差 1）"""
+    return math.floor(x + 0.5)
+
+
+def link_dimensions(source, w, h, ratio, aspect=None):
+    """按编辑来源联动另一维度（Tk 与 Swift 行为对齐）。
 
     source: 'w' 表示宽被编辑，'h' 表示高被编辑
-    返回 (w, h) 联动后的整数对；非固定比例原样返回
+    aspect: 源图像素宽高比（iw/ih）；原始比例/等比完整下传入则按源图比例联动
+            （与 Swift 版实时联动一致），None 时这两种模式不联动
+    返回 (w, h) 联动后的整数对；非可联动比例原样返回
     """
+    if ratio == RATIO_FIT_BOX or ratio == RATIO_ORIGINAL:
+        if not aspect or aspect <= 0:
+            return w, h
+        if source == 'w':
+            return w, max(1, _round_half_up(w / aspect))
+        return max(1, _round_half_up(h * aspect)), h
     if ratio not in RATIO_FIXED:
         return w, h
     if ratio == "1:1 (正方形)":
         return (w, w) if source == 'w' else (h, h)
     if ratio == "4:3":
-        return (w, max(1, round(w * 3 / 4))) if source == 'w' else (max(1, round(h * 4 / 3)), h)
+        return (w, max(1, _round_half_up(w * 3 / 4))) if source == 'w' else (max(1, _round_half_up(h * 4 / 3)), h)
     if ratio == "3:4":
-        return (w, max(1, round(w * 4 / 3))) if source == 'w' else (max(1, round(h * 3 / 4)), h)
+        return (w, max(1, _round_half_up(w * 4 / 3))) if source == 'w' else (max(1, _round_half_up(h * 3 / 4)), h)
     if ratio == "16:9":
-        return (w, max(1, round(w * 9 / 16))) if source == 'w' else (max(1, round(h * 16 / 9)), h)
+        return (w, max(1, _round_half_up(w * 9 / 16))) if source == 'w' else (max(1, _round_half_up(h * 16 / 9)), h)
     if ratio == "9:16":
-        return (w, max(1, round(w * 16 / 9))) if source == 'w' else (max(1, round(h * 9 / 16)), h)
+        return (w, max(1, _round_half_up(w * 16 / 9))) if source == 'w' else (max(1, _round_half_up(h * 9 / 16)), h)
     return w, h
 
 
