@@ -4,6 +4,8 @@ import os
 import re
 from datetime import datetime
 
+from .models import atomic_write_json
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 LEGACY_HISTORY_FILE = os.path.join(os.getcwd(), "history.json")
@@ -87,9 +89,11 @@ class HistoryManager:
                     record['output_size'] = max(16, min(160, cell))
                     updated = True
             for key in ('width', 'height'):
-                if key in record and not isinstance(record[key], (int, float)):
-                    record[key] = _as_int(record[key], 50)
-                    updated = True
+                if key in record:
+                    val = record[key]
+                    if isinstance(val, bool) or not isinstance(val, int):
+                        record[key] = _as_int(val, 50)
+                        updated = True
             if 'show_grid' not in record:
                 record['show_grid'] = True
                 updated = True
@@ -136,11 +140,7 @@ class HistoryManager:
             self.save_history()
 
     def save_history(self):
-        try:
-            with open(self.file_path, 'w', encoding='utf-8') as f:
-                json.dump(self.history, f, ensure_ascii=False, indent=2)
-        except (IOError, OSError):
-            pass
+        atomic_write_json(self.file_path, self.history)
 
     def add_record(self, image_path, save_path, width, height, ratio_mode, canvas_size,
                    show_grid, grid_color, palette_name, show_labels=True, show_legend=True):

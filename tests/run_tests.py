@@ -1301,12 +1301,22 @@ def test_output_prune():
         import shutil
         shutil.rmtree(sandbox, ignore_errors=True)
 
-    # 协议级：generate 落盘后自动触发裁剪（真实 output/ 中最旧 canary 必被清掉）
+    # 协议级：generate 落盘后自动触发裁剪（canary 必须比目录内所有产物更旧，
+    # 否则 keep=50 会先删更旧文件而放过 canary —— 测试隔离缺陷，见 2026-09-30 审计）
     now = _time.time()
     canary = os.path.join(real_output, "perler_prune_canary.png")
     with open(canary, "w") as f:
         f.write("x")
-    os.utime(canary, (now - 7200, now - 7200))
+    existing_ages = []
+    for n in os.listdir(real_output):
+        if n == "perler_prune_canary.png":
+            continue
+        try:
+            existing_ages.append(os.path.getmtime(os.path.join(real_output, n)))
+        except OSError:
+            continue
+    canary_mtime = min(existing_ages) - 3600 if existing_ages else now - 7200
+    os.utime(canary, (canary_mtime, canary_mtime))
     src = make_source(100, 100)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     proc = subprocess.Popen(
@@ -1403,6 +1413,101 @@ def test_golden_matrix():
     r_dither.chart.close()
 
 
+def test_audit_regressions():
+    """2026-09-30 逐行审计缺陷回归：透明 alpha / board 舍入 / 历史最终网格 / 协议校验"""
+    print("== 测试11: 审计缺陷回归（透明/舍入/历史/协议校验） ==")
+    from core.models import _round_half_up
+    from core_server import _coerce_grid_color, _sanitize_settings
+    proc = ImageProcessor()
+
+    # 1. 透明 PNG：右半透明应为空格（无珠）
+    rgba = Image.new("RGBA", (40, 20), (0, 0, 0, 0))
+    for x in range(20):
+        for y in range(20):
+            rgba.putpixel((x, y), (220, 30, 30, 255))
+    alpha_src = os.path.join(TEST_DIR, "audit_alpha.png")
+    rgba.save(alpha_src)
+    r = proc.process_image(alpha_src, 20, 10, cell_size=16, save=False,
+                           show_color_legend=False, show_row_col_labels=False)
+    report("透明 PNG 生成不崩", r is not None)
+    if r:
+        report("透明像素变空格（total≈100）", abs(r.total_beads - 100) <= 5,
+               f"total={r.total_beads} 期望≈100")
+        r.chart.close()
+        if r.finished:
+            r.finished.close()
+
+    # 对照：全不透明
+    opaque_src = make_source(40, 20, (220, 30, 30))
+    r2 = proc.process_image(opaque_src, 20, 10, cell_size=16, save=False,
+                            show_color_legend=False, show_row_col_labels=False)
+    report("对照全不透明 total=200", r2 and r2.total_beads == 200,
+           f"total={r2.total_beads if r2 else None}")
+    if r2:
+        r2.chart.close()
+        if r2.finished:
+            r2.finished.close()
+
+    # 2. board 半上舍入：14 * 3/4 = 10.5 → 11（round 银行家得 10）
+    report("board 半上舍入 10.5→11",
+           _round_half_up(14 * 3 / 4) == 11 and round(14 * 3 / 4) == 10)
+
+    # 3. 历史记录写最终网格（fit_box 模糊请求 30×30 + 源图 40×20 → 30×15）
+    from core.services.batch_service import BatchService
+    from core.models import QueueItem, GenerateParams as GP
+    wide = make_source(40, 20, (10, 100, 200))
+    hist_path = os.path.join(TEST_DIR, "audit_hist.json")
+    hm = HistoryManager(file_path=hist_path)
+    bs = BatchService(proc, hm)
+    item = QueueItem(image_path=wide,
+                     params=GP(grid_w=30, grid_h=30, cell_px=20,
+                               ratio="等比完整（适应框内）"), fmt="PNG")
+    out = os.path.join(TEST_DIR, "audit_out")
+    os.makedirs(out, exist_ok=True)
+    br = bs.process([item], out)
+    report("批量 fit_box 成功", len(br.success) == 1, str(br.failed))
+    if br.success and hm.history:
+        h = hm.history[0]
+        report("历史写最终网格 30×15",
+               h.get("width") == 30 and h.get("height") == 15,
+               f"history={h.get('width')}x{h.get('height')}")
+        name = os.path.basename(br.success[0])
+        report("文件名含最终网格 30x15", "30x15" in name, f"file={name}")
+
+    # 4. 历史 float 宽高转 int
+    hist2 = os.path.join(TEST_DIR, "audit_hist2.json")
+    import json as _json
+    with open(hist2, "w") as f:
+        _json.dump([{"image_path": "a.png", "save_path": "/tmp/a.png",
+                     "width": 50.7, "height": 40.2, "output_size": 60,
+                     "grid_color": "#C8C8C8"}], f)
+    hm2 = HistoryManager(file_path=hist2)
+    rec = hm2.history[0] if hm2.history else {}
+    report("历史宽高 float→int",
+           rec.get("width") == 50 and rec.get("height") == 40,
+           f"width={rec.get('width')!r} height={rec.get('height')!r}")
+
+    # 5. grid_color 校验
+    report("grid_color hex 字符串",
+           _coerce_grid_color("#C8C8C8") == (200, 200, 200))
+    report("grid_color 列表", _coerce_grid_color([1, 2, 3]) == (1, 2, 3))
+    report("grid_color 非法回退默认",
+           _coerce_grid_color("boom") == (200, 200, 200))
+    report("grid_color None 回退默认",
+           _coerce_grid_color(None) == (200, 200, 200))
+    report("grid_color 越界回退默认",
+           _coerce_grid_color([300, 0, 0]) == (200, 200, 200))
+
+    # 6. settings_set 类型清洗
+    clean = _sanitize_settings({"cell_px": ["a"], "show_grid": {},
+                                "palette": "MARD 221 色", "window_w": 800})
+    report("settings 非法类型被丢弃",
+           "cell_px" not in clean and "show_grid" not in clean, str(clean))
+    report("settings 合法键保留",
+           clean.get("palette") == "MARD 221 色" and clean.get("window_w") == 800)
+    report("settings 非 dict 入参 → 空", _sanitize_settings("boom") == {})
+
+
 def main():
     print("=== 拼豆图纸自动化测试 ===\n")
     test_models()
@@ -1422,6 +1527,7 @@ def main():
     test_output_prune()
     test_wysiwyg_link()
     test_robustness()
+    test_audit_regressions()
     print("\n=== 结果汇总 ===")
     print(f"通过: {RESULT['passed']}   失败: {RESULT['failed']}")
     if RESULT["errors"]:

@@ -8,7 +8,9 @@
 """
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
+import json
 import math
+import os
 
 # ---------- 常量 ----------
 RATIO_ORIGINAL = "按原图比例（宽为基准）"
@@ -30,6 +32,21 @@ DEFAULT_PALETTE = "MARD 221 色"
 
 
 # ---------- 纯函数 ----------
+def atomic_write_json(path, data, indent=2):
+    """临时文件 + os.replace 原子写 JSON，防进程中断留下半截文件"""
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=indent)
+        os.replace(tmp, path)
+    except (IOError, OSError):
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
 def hex_to_rgb(hex_color):
     """#RRGGBB → (r, g, b)；非法输入抛 ValueError"""
     text = str(hex_color).strip().lstrip('#')

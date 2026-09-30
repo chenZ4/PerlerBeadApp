@@ -7,6 +7,7 @@ from .models import (
     DEFAULT_GRID_COLOR,
     RATIO_ORIGINAL,
     QueueItem,
+    atomic_write_json,
 )
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,11 +50,7 @@ class SettingsStore:
         return settings
 
     def save_settings(self, settings):
-        try:
-            with open(self.settings_file, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
-        except (IOError, OSError):
-            pass
+        atomic_write_json(self.settings_file, settings)
 
     def update_settings(self, **kwargs):
         settings = self.load_settings()
@@ -82,12 +79,9 @@ class SettingsStore:
         return items
 
     def save_queue(self, items):
-        try:
-            with open(self.queue_file, 'w', encoding='utf-8') as f:
-                json.dump([i.to_dict() if isinstance(i, QueueItem) else i
-                           for i in items], f, ensure_ascii=False, indent=2)
-        except (IOError, OSError):
-            pass
+        atomic_write_json(self.queue_file,
+                          [i.to_dict() if isinstance(i, QueueItem) else i
+                           for i in items])
 
 
 # ---------- 兼容旧函数（返回默认实例结果，行为与原模块级函数一致） ----------

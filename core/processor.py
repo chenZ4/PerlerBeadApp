@@ -108,7 +108,12 @@ class ImageProcessor:
             grid_w = max(1, min(int(grid_w), MAX_GRID_SIZE))
             grid_h = max(1, min(int(grid_h), MAX_GRID_SIZE))
             with Image.open(image_path) as opened:
-                img = opened.convert("RGB")
+                # 带 alpha 的源图必须保留透明通道（透明格 = 空格，无珠）；
+                # 提前 convert("RGB") 会让下方 alpha_mask 成为死代码
+                if opened.mode in ("RGBA", "LA", "PA") or "transparency" in opened.info:
+                    img = opened.convert("RGBA")
+                else:
+                    img = opened.convert("RGB")
             orig_w, orig_h = img.size
 
             # 0. 特效：几何变形 + 预处理（作用于原图）

@@ -310,3 +310,188 @@ lastProgrammaticW/H 只在 writeLinked 时写入：图 A 联动后切到图 B，
 - 引擎测试环境：conda `pindou`（Python 3.11.15 / Pillow 12.3 / numpy 2.4.6 / opencv 4.14）。
 - 全程读写限于项目文件夹内；xcodebuild DerivedData 钉在 `app/.derivedData`。
 - 探针脚本 `tests/probe_*.py` 为临时产物（结论已并入正式回归），提交前删除。
+
+---
+
+# 3. 完整复测 + 逐行代码审计（2026-09-30）
+
+执行人：测试工程师（独立复测）
+环境：macOS arm64 / conda `pindou`（Python 3.11.15 / Pillow 12.3.0 / numpy 2.4.6 / OpenCV 4.14 / Tk 8.6）+ Swift 6.4
+
+## 3.1 门禁套件复测（顺序执行，不可并发）
+
+| 套件 | 通过 | 失败 | 结果 |
+|---|---|---|---|
+| `tests/run_tests.py` | 213 | 1 | ⚠️ 1 项 flaky（见 3.3-D） |
+| `tests/gui_smoke.py` | 92 | 0 | ✅ |
+| `tests/stress_protocol.py` | 12 | 0 | ✅ |
+| `swift test`（`app/`） | 78 | 0 | ✅ |
+| **合计** | **395** | **1** | 主体功能稳定 |
+
+说明：`run_tests` 中「文件不存在返回 None」会打印预期 traceback，属文档已记载的无害现象。
+唯一失败项为 `generate 自动触发裁剪（canary 已清理）`，根因见 3.3-D（测试隔离缺陷，非产品裁剪逻辑错误）。
+
+## 3.2 深挖审计用例（本轮新增，不在门禁内）
+
+针对逐行审计发现的疑似缺陷，写了独立验证脚本，实证结果如下：
+
+| 用例 | 结果 | 证据 |
+|---|---|---|
+| 透明 PNG 左半不透明/右半透明 20×10 | **BUG 确认** | 期望 total≈100，实际=200 |
+| 同尺寸全不透明对照 | 正常 | total=200 |
+| `bg_remove` 特效路径（可产生 RGBA） | 正常 | 纯色背景 total=0 |
+| board=14 源图 4:3 舍入 | **BUG 确认** | `round`=10，`half_up`=11 |
+| fit_box 模糊请求 30×30 + 源图 40×20 | **BUG 确认** | 引擎 30×15，历史记 30×30 |
+| 协议 `grid_color="#C8C8C8"` | **BUG 确认** | `tuple(str)` → `('#','C','8',…)` |
+| 协议 `settings_set` 传入非法类型 | **BUG 确认** | `cell_px=['a']`/`show_grid={}` 被落盘 |
+| 协议 `settings_set` 传入 `"boom"` | 轻微 | handle 抛 ValueError，worker 捕获不崩 |
+| 历史迁移 width=50.7 | **BUG 确认** | 保留 float 未转 int |
+| 批量文件名 600×600 vs 引擎 500×250 | **BUG 确认** | 文件名未用 clamp 后尺寸 |
+| 协议 generate 透明 PNG | **BUG 确认** | total=200（与处理器同根因） |
+
+## 3.3 代码审计发现（按严重级别）
+
+### A. 【高】透明 PNG 输入 alpha 被提前丢弃 — 功能缺陷
+
+**位置**：`core/processor.py:110-111` vs `163-166`
+
+```python
+with Image.open(image_path) as opened:
+    img = opened.convert("RGB")   # ← alpha 在此丢失
+...
+if small_img.mode == "RGBA":     # ← 源图路径下永远为 False（死代码）
+    alpha_mask = ...
+```
+
+- 注释写明「支持 RGBA：透明像素为空格，无珠」，但源图在进入管线时已被转 RGB。
+- 透明区 `convert("RGB")` 后变成实色（通常为原 RGB 或黑），被计为色豆。
+- 仅当 `bg_remove` 等 preprocess 特效**之后**产生 RGBA 时，空格逻辑才生效（特效路径正常）。
+- 影响面：Tk 版 / Swift 版 / 协议 generate 全部入口；透明底素材、带 alpha 的贴纸图。
+- **修复建议**：`Image.open` 后保留 `opened.mode`；若含 alpha 则走 `RGBA → resize → alpha_mask`，仅在无 alpha 时 `convert("RGB")`。
+
+### B. 【中】board 模式舍入与 UI 联动公式不一致
+
+**位置**：`core_server.py:237`（`round`） vs `core/models.py:90-93`（`_round_half_up`）
+
+- 文档与 Swift 对齐约定是半上舍入（`floor(x+0.5)`），Python 内建 `round` 是银行家舍入。
+- 实测分歧：board=14、源图 4:3 → `round` 得 10，半上舍入得 11。
+- 与 ARCHITECTURE.md「联动公式禁用 round()」的约定相悖。
+- **修复建议**：`core_server.py` board 计算改用 `core.models._round_half_up`。
+
+### C. 【中】批量历史记录写入「请求尺寸」而非「最终网格」
+
+**位置**：`core/services/batch_service.py:70-75`
+
+```python
+self.history_mgr.add_record(..., params.grid_w, params.grid_h, ...)
+# 应改为 result.grid_w, result.grid_h
+```
+
+- fit_box / 原始比例下模糊请求会被引擎重算网格（实测 30×30 请求 → 30×15）。
+- 历史回放/续做时会按错误尺寸重建参数。
+- 同文件 `_build_output`（L37）文件名也用未 clamp 的请求值（实测文件名 600x600，引擎实际 500x500→再按比例 500x250）。
+
+### D. 【中】协议层参数校验缺口
+
+| 点 | 位置 | 问题 |
+|---|---|---|
+| `grid_color` | `core_server.py:253` | `tuple("#C8C8C8")` 变成字符元组；应 `hex_to_rgb_safe` 或接受 list[int] |
+| `settings_set` | `core_server.py:162` | 任意类型可 `update` 落盘（`cell_px=['a']`）；应按 DEFAULTS 做类型清洗 |
+| `settings_set` 非 dict | 同上 | `handle` 抛 ValueError（worker 兜底不崩，但应显式校验） |
+| `queue_save` | `core_server.py:170` | 裸 dict 直写磁盘，依赖加载侧兜底 |
+
+### E. 【低】历史迁移类型不完整
+
+**位置**：`core/history_manager.py:89-92`
+
+- `width`/`height` 为 float 时原样保留（50.7），未转 int。
+- 建议统一 `_as_int` 后写入。
+
+### F. 【低】持久化非原子写
+
+- `settings.py` / `history_manager.py` / `my_colors.py` 均为直接 `open(w)` + `dump`。
+- 进程被杀可能留下半截 JSON；建议 temp + `os.replace`。
+
+### G. 【低】杂项
+
+- `core_server.py` `_cancelled` 集合：对不存在的 rid 发 cancel 会永久残留（可加 TTL 或上限）。
+- `models.py` `as_bool`/`parse_int` 对 float 字符串（"50.7"）会回退 default，与历史 float 问题叠加。
+- `colors.py` `ColorPalette` 对未知名静默回落 `_FALLBACK`，可能掩盖调色板加载失败。
+
+## 3.4 测试资产问题
+
+### D. 【中】`run_tests.py` 裁剪 canary 用例 flaky
+
+**位置**：`tests/run_tests.py:1304-1330`
+
+- canary mtime 固定为 `now-7200`，断言「generate 后 canary 必被删」。
+- 但 `prune_output` 按 mtime 保留最新 50 个；当 `output/` 已有比 2 小时更旧的文件时，先删那些，canary 存活 → 用例红。
+- 复测证实：output 状态干净时绿；存在更旧文件时红。产品裁剪逻辑本身正确（单元用例 keep=50 / 删最旧 / 留最新 均绿）。
+- **修复建议**：canary mtime 设为目录内最小 mtime − 1 小时，或先清空 sandbox 化隔离。
+
+## 3.5 审计覆盖范围
+
+| 模块 | 覆盖 | 备注 |
+|---|---|---|
+| `core/models.py` | 逐行 | 比例联动/钳制/序列化 |
+| `core/settings.py` | 逐行 | 类型清洗不足 |
+| `core/processor.py` | 逐行 | 高优先级缺陷在 L111 |
+| `core/colors.py` | 逐行 | Lab 匹配/校验/缓存 |
+| `core/effects/*` | 逐行 | registry 钳制 OK；bg_remove 正常 |
+| `core/services/*` | 逐行 | 历史尺寸/文件名问题 |
+| `core_server.py` | 逐行 | 协议校验缺口 |
+| `core/history_manager.py` | 逐行 | float/原子写 |
+| `core/my_colors.py` | 逐行 | 校验 OK，写非原子 |
+| `core/templates.py` | 逐行 | 路径穿越防护 OK |
+| `ui/state.py` | 逐行 | 撤销/资源关闭 OK |
+| `ui/app_controller.py` | 关键路径 | 批量/撤销/入队 |
+| Swift `app/` | 门禁 78 项 | 未逐行（依赖协议契约） |
+
+## 3.6 结论与优先级
+
+**门禁主体**：395/396，功能面稳定，WYSIWYG/内存/协议压力/GUI 冒烟均绿。
+
+**交付前建议修复（按优先级）**：
+
+1. **P0** 透明 PNG alpha 丢失（A）— 明确功能缺陷，有复现步骤
+2. **P1** board 半上舍入对齐（B）；历史/文件名写最终网格（C）
+3. **P1** 协议 `grid_color`/`settings_set` 类型校验（D）
+4. **P2** 历史 float 钳制（E）；原子写（F）；canary 测试隔离（3.4-D）
+
+**不阻塞项**：settings_set 非 dict 有 worker 兜底；路径穿越/取消风暴/内存基线已有防护与测试。
+
+---
+
+# 4. 缺陷修复验证（2026-09-30，紧接第 3 章审计）
+
+## 4.1 修复清单
+
+| 级别 | 缺陷 | 修复位置 | 做法 |
+|---|---|---|---|
+| P0 | 透明 PNG alpha 丢失 | `core/processor.py:110-117` | 打开时识别 RGBA/LA/PA/transparency，保留 alpha；仅无 alpha 才转 RGB |
+| P1 | board 银行家舍入 | `core_server.py` | 改用 `core.models._round_half_up` |
+| P1 | 历史/文件名写请求尺寸 | `core/services/batch_service.py` | 生成后再按 `result.grid_w/h` 命名与写历史 |
+| P1 | `grid_color` 字符串被 `tuple()` | `core_server.py` `_coerce_grid_color` | 兼容 hex / [r,g,b]，非法回退默认灰 |
+| P1 | `settings_set` 非法类型落盘 | `core_server.py` `_sanitize_settings` | 按 DEFAULTS 类型清洗，拒绝 list/dict |
+| P2 | 历史宽高 float 不转 int | `core/history_manager.py` | 非 int / bool 一律 `_as_int` |
+| P2 | 持久化非原子写 | `core/models.py` `atomic_write_json` | tmp + `os.replace`，settings/queue/history/my_colors 共用 |
+| 测试 | canary 用例 flaky | `tests/run_tests.py` | canary mtime = 目录最旧文件 − 1h |
+
+## 4.2 回归用例
+
+`tests/run_tests.py` 新增 **测试11: 审计缺陷回归**（16 项），覆盖：
+透明空格 / 对照全不透明 / board 半上舍入 / 历史最终网格 30×15 / 文件名 30x15 /
+float→int / grid_color 五种输入 / settings 类型清洗。
+
+## 4.3 修复后门禁终态（顺序执行）
+
+| 套件 | 通过 | 失败 |
+|---|---|---|
+| `tests/run_tests.py`（214 基线 + 16 回归） | **230** | 0 |
+| `tests/gui_smoke.py` | **92** | 0 |
+| `tests/stress_protocol.py` | **12** | 0 |
+| `swift test` | **78** | 0 |
+| **合计** | **412** | **0** |
+
+原 flaky 项 `generate 自动触发裁剪（canary 已清理）` 已稳定通过。
+Golden 矩阵哈希全部一致（透明修复不影响无 alpha 基准图）。

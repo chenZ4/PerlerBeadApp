@@ -17,7 +17,7 @@ import numpy as np
 from core.colors import PALETTE_OPTIONS, _PALETTE_CACHE, get_palette
 from core.effects import list_effects
 from core.history_manager import HistoryManager
-from core.models import MAX_GRID_SIZE
+from core.models import MAX_GRID_SIZE, _round_half_up
 from core.processor import ImageProcessor, OUTPUT_DIR
 from core.settings import load_queue, load_settings, save_queue, save_settings
 from core.version import APP_VERSION
@@ -40,6 +40,56 @@ def _resolve_palette(name):
         if load_my_colors() is not None:
             return "my_colors"
     return "mard_221"
+
+
+def _coerce_grid_color(value):
+    """grid_color 兼容 hex 字符串 / [r,g,b] / (r,g,b)；非法回退默认灰"""
+    from core.models import DEFAULT_GRID_RGB, hex_to_rgb_safe
+    if value is None:
+        return DEFAULT_GRID_RGB
+    if isinstance(value, str):
+        return hex_to_rgb_safe(value)
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        try:
+            r, g, b = (int(v) for v in value)
+            if all(0 <= v <= 255 for v in (r, g, b)):
+                return (r, g, b)
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_GRID_RGB
+
+
+def _sanitize_settings(payload):
+    """settings_set 类型清洗：只保留 DEFAULTS 同型键，非法类型丢弃"""
+    if not isinstance(payload, dict):
+        return {}
+    from core.models import as_bool
+    from core.settings import DEFAULTS
+    clean = {}
+    for key, default in DEFAULTS.items():
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(default, bool):
+            if isinstance(value, bool) or isinstance(value, (int, float)) or isinstance(value, str):
+                clean[key] = as_bool(value, default)
+        elif isinstance(default, int) and not isinstance(default, bool):
+            try:
+                clean[key] = int(value)
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(default, str):
+            if isinstance(value, str):
+                clean[key] = value
+        else:
+            clean[key] = value
+    # 允许透传未知 str→标量 键（向前兼容），但拒绝 list/dict 容器
+    for key, value in payload.items():
+        if key in clean or key in DEFAULTS:
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            clean[key] = value
+    return clean
 
 
 def tempfile_dir():
@@ -159,9 +209,10 @@ class CoreServer:
         if op == "settings_get":
             return {"ok": True, "settings": load_settings()}
         if op == "settings_set":
-            self.settings.update(params.get("settings") or {})
+            clean = _sanitize_settings(params.get("settings") or {})
+            self.settings.update(clean)
             save_settings(self.settings)
-            return {"ok": True}
+            return {"ok": True, "settings": self.settings}
         if op == "history":
             return {"ok": True, **self._history(params)}
         if op == "queue_load":
@@ -234,7 +285,8 @@ class CoreServer:
                 iw, ih = im.size
             board = int(board)
             grid_w = board
-            grid_h = max(1, round(board * ih / iw))
+            # 半上舍入对齐 UI 联动公式（禁用 Python 银行家 round，见 ARCHITECTURE.md）
+            grid_h = max(1, _round_half_up(board * ih / iw))
 
         def cb(y, total):
             self._emit_progress(rid, y, total)
@@ -250,7 +302,7 @@ class CoreServer:
             show_finished=params.get("show_finished", True),
             effects=params.get("effects"),
             show_grid=params.get("show_grid", True),
-            grid_color=tuple(params.get("grid_color", (200, 200, 200))),
+            grid_color=_coerce_grid_color(params.get("grid_color")),
             palette_name=_resolve_palette(params.get("palette", "mard_221")),
             show_color_legend=params.get("show_color_legend", True),
             show_row_col_labels=params.get("show_row_col_labels", True),
@@ -339,7 +391,7 @@ class CoreServer:
             effects=params.get("effects"),
             grid_overrides=overrides,
             show_grid=params.get("show_grid", True),
-            grid_color=tuple(params.get("grid_color", (200, 200, 200))),
+            grid_color=_coerce_grid_color(params.get("grid_color")),
             palette_name=_resolve_palette(params.get("palette", "mard_221")),
             show_color_legend=params.get("show_color_legend", True),
             show_row_col_labels=params.get("show_row_col_labels", True),

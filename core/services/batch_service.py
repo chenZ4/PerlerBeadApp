@@ -30,11 +30,14 @@ class BatchService:
             i += 1
         return path
 
-    def _build_output(self, out_dir: str, item: QueueItem):
-        """生成一个 QueueItem 的导出文件名"""
+    def _build_output(self, out_dir: str, item: QueueItem,
+                      grid_w=None, grid_h=None):
+        """生成一个 QueueItem 的导出文件名（尺寸用引擎最终网格，避免与产物不一致）"""
         src_name = os.path.splitext(os.path.basename(item.image_path))[0]
         p = item.params
-        base = f"perler_{src_name}_{p.grid_w}x{p.grid_h}_{display_to_internal(p.palette)}"
+        gw = p.grid_w if grid_w is None else grid_w
+        gh = p.grid_h if grid_h is None else grid_h
+        base = f"perler_{src_name}_{gw}x{gh}_{display_to_internal(p.palette)}"
         if item.export_mode:
             base += f"_{item.export_mode}"
         return self._unique_path(out_dir, base, item.ext)
@@ -42,7 +45,6 @@ class BatchService:
     def _process_one(self, out_dir: str, item: QueueItem):
         """处理单个队列项，返回导出路径；取消时返回 None"""
         params = item.params.clamp()
-        out_path = self._build_output(out_dir, item)
         result = self.processor.process_image(
             item.image_path, params.grid_w, params.grid_h,
             cell_size=params.cell_px,
@@ -59,6 +61,8 @@ class BatchService:
             raise RuntimeError("生成失败")
         if self._cancelled():
             return None
+        out_path = self._build_output(
+            out_dir, item, grid_w=result.grid_w, grid_h=result.grid_h)
         img = result.chart
         try:
             if item.export_mode:
@@ -67,10 +71,11 @@ class BatchService:
                 img.save(out_path)
         finally:
             img.close()
+        # 历史记录写引擎最终网格（fit_box/原始比例下可能与请求不同）
         self.history_mgr.add_record(
             item.image_path, out_path,
-            params.grid_w, params.grid_h, params.ratio,
-            params.cell_px, params.show_grid,
+            result.grid_w, result.grid_h, params.ratio,
+            result.cell_size or params.cell_px, params.show_grid,
             params.grid_color, params.palette,
             params.show_labels, params.show_legend)
         return out_path

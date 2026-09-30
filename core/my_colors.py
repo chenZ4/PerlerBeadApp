@@ -3,6 +3,7 @@ import json
 import os
 
 from .colors import _validate
+from .models import atomic_write_json
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MY_COLORS_FILE = os.path.join(BASE_DIR, "my_colors.json")
@@ -42,8 +43,7 @@ def save_my_colors(colors, names=None, codes=None):
         return False
     if _build_palette(data) is None:
         return False
-    with open(MY_COLORS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+    atomic_write_json(MY_COLORS_FILE, data, indent=1)
     return True
 
 
