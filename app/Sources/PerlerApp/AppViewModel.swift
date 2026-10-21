@@ -15,13 +15,20 @@ final class AppViewModel: ObservableObject {
 
     /// R4: 取消当前生成/编辑请求（rid 未就绪时也立即复位 UI）
     func cancelActive() {
+        cancelActive(silent: false)
+    }
+
+    /// silent=true 供内部自动预览让位，不写「已取消」状态
+    private func cancelActive(silent: Bool) {
         if let eng = engine, let rid = activeRequestID {
             eng.cancel(requestID: rid)
         }
         isBusy = false
         progress = -1
         activeRequestID = nil
-        statusText = "已取消"
+        isAutoPreviewing = false
+        activeIsAutoPreview = false
+        if !silent { statusText = "已取消" }
     }
 
     // MARK: 参数
@@ -37,14 +44,20 @@ final class AppViewModel: ObservableObject {
     private var lastProgrammaticW: String?
     private var lastProgrammaticH: String?
     @Published var gridW = "29" {
-        didSet { if !linking && gridW != oldValue { lastEditedDim = "w" } }
+        didSet {
+            if !linking && gridW != oldValue { lastEditedDim = "w" }
+            parametersDidChange()
+        }
     }
     @Published var gridH = "29" {
-        didSet { if !linking && gridH != oldValue { lastEditedDim = "h" } }
+        didSet {
+            if !linking && gridH != oldValue { lastEditedDim = "h" }
+            parametersDidChange()
+        }
     }
-    @Published var cellSize = "60"
-    @Published var ratioMode = "原始比例"
-    @Published var paletteDisplay = "MARD 221 色"
+    @Published var cellSize = "60" { didSet { parametersDidChange() } }
+    @Published var ratioMode = "原始比例" { didSet { parametersDidChange() } }
+    @Published var paletteDisplay = "MARD 221 色" { didSet { parametersDidChange() } }
     @Published var selectedTemplate: String?
     @Published var palettes: [PaletteInfo] = []
     @Published var templates: [TemplateInfo] = []
@@ -155,41 +168,46 @@ final class AppViewModel: ObservableObject {
         writeLinked(nw, nh)
     }
 
-    // MARK: 特效（全部默认关闭）
-    @Published var outlineCellOn = false
-    @Published var outlineEdgeOn = false
-    @Published var grayscaleOn = false
-    @Published var ditherOn = false
-    @Published var darkChartOn = false
-    @Published var maxColorsOn = false
-    @Published var maxColorsValue = 12
-    @Published var presetOn = false
-    @Published var presetName = "pastel"
+    // MARK: 特效（默认关闭；任一变更 → 脏标记 + ~500ms debounce 自动预览）
+    @Published var outlineCellOn = false { didSet { parametersDidChange() } }
+    @Published var outlineCellWidth = 1 { didSet { parametersDidChange() } }
+    @Published var outlineEdgeOn = false { didSet { parametersDidChange() } }
+    @Published var outlineEdgeStrength = 0.8 { didSet { parametersDidChange() } }
+    @Published var grayscaleOn = false { didSet { parametersDidChange() } }
+    @Published var grayscaleContrast = 1.0 { didSet { parametersDidChange() } }
+    @Published var ditherOn = false { didSet { parametersDidChange() } }
+    @Published var ditherStrength = 1.0 { didSet { parametersDidChange() } }
+    @Published var darkChartOn = false { didSet { parametersDidChange() } }
+    @Published var maxColorsOn = false { didSet { parametersDidChange() } }
+    @Published var maxColorsValue = 12 { didSet { parametersDidChange() } }
+    @Published var presetOn = false { didSet { parametersDidChange() } }
+    @Published var presetName = "pastel" { didSet { parametersDidChange() } }
 
     // 特效库 v2 补齐（此前引擎已支持但 UI 无入口）
-    @Published var adjustOn = false
-    @Published var adjustBrightness = 1.0
-    @Published var adjustContrast = 1.0
-    @Published var adjustSaturation = 1.2   // 打开时默认即可感知，避免「开了没效果」
-    @Published var mirrorOn = false
-    @Published var mirrorDirection = "horizontal"
-    @Published var cropOn = false
-    @Published var cropX0 = 0.0
-    @Published var cropY0 = 0.0
-    @Published var cropX1 = 1.0
-    @Published var cropY1 = 1.0
-    @Published var bgRemoveOn = false
-    @Published var bgRemoveColor = "#FFFFFF"
-    @Published var bgRemoveTolerance = 30
-    @Published var celShadeOn = false
-    @Published var celShadeLevels = 4
-    @Published var neonOn = false
-    @Published var neonSaturation = 1.5
-    @Published var neonDarkness = 0.75
-    @Published var duotoneOn = false
-    @Published var duotoneColor1 = "#1E1E1E"
-    @Published var duotoneColor2 = "#F0F0F0"
-    @Published var chibiOn = false
+    @Published var adjustOn = false { didSet { parametersDidChange() } }
+    @Published var adjustBrightness = 1.0 { didSet { parametersDidChange() } }
+    @Published var adjustContrast = 1.0 { didSet { parametersDidChange() } }
+    @Published var adjustSaturation = 1.2 { didSet { parametersDidChange() } }
+    @Published var mirrorOn = false { didSet { parametersDidChange() } }
+    @Published var mirrorDirection = "horizontal" { didSet { parametersDidChange() } }
+    @Published var cropOn = false { didSet { parametersDidChange() } }
+    // 裁剪默认内缩 10%（旧默认 0/0/1/1 = 恒等裁剪，用户打开开关看不到任何变化）
+    @Published var cropX0 = 0.1 { didSet { parametersDidChange() } }
+    @Published var cropY0 = 0.1 { didSet { parametersDidChange() } }
+    @Published var cropX1 = 0.9 { didSet { parametersDidChange() } }
+    @Published var cropY1 = 0.9 { didSet { parametersDidChange() } }
+    @Published var bgRemoveOn = false { didSet { parametersDidChange() } }
+    @Published var bgRemoveColor = "#FFFFFF" { didSet { parametersDidChange() } }
+    @Published var bgRemoveTolerance = 30 { didSet { parametersDidChange() } }
+    @Published var celShadeOn = false { didSet { parametersDidChange() } }
+    @Published var celShadeLevels = 4 { didSet { parametersDidChange() } }
+    @Published var neonOn = false { didSet { parametersDidChange() } }
+    @Published var neonSaturation = 1.5 { didSet { parametersDidChange() } }
+    @Published var neonDarkness = 0.9 { didSet { parametersDidChange() } }
+    @Published var duotoneOn = false { didSet { parametersDidChange() } }
+    @Published var duotoneColor1 = "#1E1E1E" { didSet { parametersDidChange() } }
+    @Published var duotoneColor2 = "#F0F0F0" { didSet { parametersDidChange() } }
+    @Published var chibiOn = false { didSet { parametersDidChange() } }
 
     // MARK: 结果
     @Published var chartImage: NSImage?
@@ -322,6 +340,8 @@ final class AppViewModel: ObservableObject {
     /// 换图/换模板时重置结果与编辑状态（防止旧编辑污染新图）
     private func resetForNewImage(_ keySource: String) {
         imageEpoch += 1
+        cancelPendingAutoPreview()
+        needsRegenerate = false
         // 联动回声指纹一并失效：否则新图上输入与旧图联动结果相同时，
         // 首次编辑会被误判为回声而跳过联动
         lastProgrammaticW = nil
@@ -375,6 +395,64 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    // MARK: - 自动预览（参数/特效变更 → needsRegenerate + ~500ms debounce 重算）
+    /// debounce 时长（UI 可据此显示「即将刷新」）
+    static let autoPreviewDebounce: TimeInterval = 0.5
+    /// 参数已变更但预览尚未刷新（UI 脏标记；成功生成后自动清除）
+    @Published private(set) var needsRegenerate = false
+    /// 正在执行「自动预览」请求（与手动 isBusy 区分，UI 可显示「正在刷新预览…」）
+    @Published private(set) var isAutoPreviewing = false
+    /// 关闭后不再自动重算（批量/编辑等场景）
+    var autoPreviewEnabled = true
+    private var autoPreviewWorkItem: DispatchWorkItem?
+    private var autoPreviewQueued = false
+    private var activeIsAutoPreview = false
+    private var suppressAutoPreview = false
+
+    /// 特效/参数变更统一入口：标记脏 + 触发 debounce 自动预览。
+    /// UI 在 Toggle/onChange 中显式调用即可（本类 @Published 的 didSet 也已接线）。
+    func parametersDidChange() {
+        if suppressAutoPreview { return }
+        needsRegenerate = true
+        scheduleAutoPreview()
+    }
+
+    /// 取消尚未触发的 debounce 与排队（不清空已有结果）
+    func cancelPendingAutoPreview() {
+        autoPreviewWorkItem?.cancel()
+        autoPreviewWorkItem = nil
+        autoPreviewQueued = false
+    }
+
+    /// 安排一次自动预览：~500ms debounce；忙时排队一次；不会覆盖手动生成。
+    func scheduleAutoPreview() {
+        guard autoPreviewEnabled, imagePath != nil else { return }
+        autoPreviewWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.autoPreviewWorkItem = nil
+            self.runAutoPreview()
+        }
+        autoPreviewWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoPreviewDebounce, execute: item)
+    }
+
+    private func runAutoPreview() {
+        guard autoPreviewEnabled, imagePath != nil, needsRegenerate else { return }
+        if isBusy {
+            if activeIsAutoPreview {
+                // 旧自动预览已过期：取消（取消不回调 completion）后重新排队
+                cancelActive(silent: true)
+                scheduleAutoPreview()
+            } else {
+                autoPreviewQueued = true
+            }
+            return
+        }
+        isAutoPreviewing = true
+        requestGenerate(isAutoPreview: true)
+    }
+
     // MARK: - 生成
     func effectsParams() -> [[String: Any]] {
         var effects: [[String: Any]] = []
@@ -389,7 +467,9 @@ final class AppViewModel: ObservableObject {
                 "y1": (cropY1 * 1000).rounded() / 1000,
             ]])
         }
-        if grayscaleOn { effects.append(["id": "grayscale", "params": [:] as [String: Any]]) }
+        if grayscaleOn {
+            effects.append(["id": "grayscale", "params": ["contrast": grayscaleContrast]])
+        }
         if adjustOn {
             effects.append(["id": "adjust", "params": [
                 "brightness": adjustBrightness,
@@ -413,9 +493,15 @@ final class AppViewModel: ObservableObject {
                 "color": bgRemoveColor, "tolerance": bgRemoveTolerance,
             ]])
         }
-        if outlineEdgeOn { effects.append(["id": "outline_edge", "params": [:] as [String: Any]]) }
-        if ditherOn { effects.append(["id": "dither", "params": [:] as [String: Any]]) }
-        if outlineCellOn { effects.append(["id": "outline_cell", "params": [:] as [String: Any]]) }
+        if outlineEdgeOn {
+            effects.append(["id": "outline_edge",
+                            "params": ["strength": outlineEdgeStrength]])
+        }
+        if ditherOn { effects.append(["id": "dither", "params": ["strength": ditherStrength]]) }
+        if outlineCellOn {
+            effects.append(["id": "outline_cell",
+                            "params": ["width": outlineCellWidth]])
+        }
         if maxColorsOn { effects.append(["id": "max_colors", "params": ["max": maxColorsValue]]) }
         if presetOn { effects.append(["id": "preset", "params": ["preset": presetName]]) }
         if darkChartOn { effects.append(["id": "dark_chart", "params": [:] as [String: Any]]) }
@@ -423,10 +509,25 @@ final class AppViewModel: ObservableObject {
     }
 
     func generate() {
-        guard let eng = engine, let path = imagePath else { return }
+        // 手动生成优先：取消 pending 自动预览，并让在途的自动预览让位
+        cancelPendingAutoPreview()
+        isAutoPreviewing = false
+        if isBusy && activeIsAutoPreview {
+            cancelActive(silent: true)
+        }
+        requestGenerate(isAutoPreview: false)
+    }
+
+    /// 统一生成入口：isAutoPreview 决定状态文案/失败提示与排队策略
+    private func requestGenerate(isAutoPreview: Bool) {
+        guard let eng = engine, let path = imagePath else {
+            isAutoPreviewing = false
+            return
+        }
         isBusy = true
         progress = 0
-        statusText = "正在处理…"
+        statusText = isAutoPreview ? "正在刷新预览…" : "正在处理…"
+        activeIsAutoPreview = isAutoPreview
         let gp = gridParams()
         var w = clampedGrid(gridW, fallback: 29)
         var h = clampedGrid(gridH, fallback: 29)
@@ -463,30 +564,46 @@ final class AppViewModel: ObservableObject {
                 self.isBusy = false
                 self.progress = -1
                 self.activeRequestID = nil
+                self.isAutoPreviewing = false
+                self.activeIsAutoPreview = false
+                if self.autoPreviewQueued {
+                    self.autoPreviewQueued = false
+                    self.scheduleAutoPreview()
+                }
             }
             // 期间已换图/换模板：迟到结果只复位状态，不应用
             guard epoch == self.imageEpoch else { return }
             switch result {
             case .success(let r):
                 if r["cancelled"] as? Bool == true {
-                    statusText = "已取消"
+                    if !isAutoPreview { statusText = "已取消" }
                     return
                 }
                 guard let data = try? JSONSerialization.data(withJSONObject: r),
                       let gen = try? JSONDecoder().decode(GenerateResult.self, from: data) else {
-                    statusText = "解析结果失败"
+                    if !isAutoPreview { statusText = "解析结果失败" }
                     return
                 }
                 applyResult(gen)
-                statusText = "完成：\(gen.gridW)×\(gen.gridH) | \(gen.totalBeads) 颗"
+                var msg = "完成：\(gen.gridW)×\(gen.gridH) | \(gen.totalBeads) 颗"
+                if !gen.warnings.isEmpty {
+                    msg += " ⚠️ " + gen.warnings.joined(separator: "；")
+                }
+                statusText = msg
+                needsRegenerate = false
             case .failure(let e):
-                statusText = "生成失败：\(e.localizedDescription)"
+                if isAutoPreview {
+                    statusText = "自动预览失败，请手动生成"
+                } else {
+                    statusText = "生成失败：\(e.localizedDescription)"
+                }
             }
         }
     }
 
     private func applyResult(_ gen: GenerateResult) {
         lastResult = gen
+        needsRegenerate = false
         chartImage = loadPreviewImage(path: gen.chartPath)
         if let fp = gen.finishedPath {
             finishedImage = loadPreviewImage(path: fp)
@@ -587,7 +704,11 @@ final class AppViewModel: ObservableObject {
                 }
                 trackedCount = doneCells.count
                 saveTrack()
-                statusText = "已编辑：\(editHistory.count) 处 | 已完成 \(doneCells.count) 格"
+                var msg = "已编辑：\(editHistory.count) 处 | 已完成 \(doneCells.count) 格"
+                if !gen.warnings.isEmpty {
+                    msg += " ⚠️ " + gen.warnings.joined(separator: "；")
+                }
+                statusText = msg
             case .failure(let e):
                 statusText = "编辑失败：\(e.localizedDescription)"
             }

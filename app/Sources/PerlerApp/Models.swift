@@ -12,6 +12,8 @@ struct GenerateResult: Decodable {
     let cellSize: Int
     let palette: String
     let cancelled: Bool?
+    /// 引擎的非致命提示（chibi 无人脸/几何特效改写网格/参数被钳制/未知特效…）
+    let warnings: [String]
 
     enum CodingKeys: String, CodingKey {
         case chartPath = "chart_path"
@@ -23,7 +25,7 @@ struct GenerateResult: Decodable {
         case gridW = "grid_w"
         case gridH = "grid_h"
         case cellSize = "cell_size"
-        case palette, cancelled
+        case palette, cancelled, warnings
     }
 
     init(from decoder: Decoder) throws {
@@ -39,6 +41,7 @@ struct GenerateResult: Decodable {
         cellSize = try c.decodeIfPresent(Int.self, forKey: .cellSize) ?? 0
         palette = try c.decodeIfPresent(String.self, forKey: .palette) ?? ""
         cancelled = try c.decodeIfPresent(Bool.self, forKey: .cancelled)
+        warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
 }
 
