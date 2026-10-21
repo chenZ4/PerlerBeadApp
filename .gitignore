@@ -389,5 +389,9 @@ qa/ui/assets/
 qa/ui/shots/
 qa/ui/tmp/
 qa/ui/render/
+qa/verify/harness/.build/
+qa/verify/harness/Sources/AppCopy/
+qa/verify/evidence/
+qa/lead/hero/
 qa/**/__pycache__/
 

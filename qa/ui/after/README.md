@@ -57,3 +57,53 @@ cd /path/to/PerlerBeadApp && PERLER_REPO_ROOT=$PWD TMPDIR=$PWD/qa/ui/tmp \
 - T5 新增参数控件（描边宽度/线稿强度/灰度对比度/抖动强度）已在特效画廊参数面板接线。
 - 特效画廊 Phase 1 无 per-effect 缩略图（按 Lead 要求不伪造）；等 T5 `effectPreviews` 到位后替换卡片缩略区。
 - 1440×900 受本机屏幕高度限制（见上）。
+
+---
+
+## 5. T9 老钱风主题（2026-10-21 追加）
+
+- 主题：暖羊皮纸 + 深咖墨 + 黄铜/干邑；**全局移除朱红/绿**（旧 #B03D25 / #3E6B4F 已删）。
+- 开始页：PLATE 00 hero（Lead 提供 `app/Sources/PerlerApp/Resources/hero_photo_to_beads.jpg`，经 `EditorialAssets.heroPhotoToBeads` 加载）+ 双框线 + 四角 crop marks + 黄铜渐变标题 + PHOTOGRAPH/BEADS 双列图注；右侧示例图版改为图录式（编号/名称/尺寸/颗数/黄铜箭头）。
+- 工作台/画廊/色卡/状态条全部使用新 tokens；报头下方双发丝线 + fleuron；Ghost 按钮暖纸底黄铜发丝线；进度条干邑；状态点青铜。
+- 新增选题截图：
+  | 场景 | 亮色 | 暗色 |
+  |---|---|---|
+  | 开始页 | real_empty_light_1280x800.png | real_empty_dark_1280x800.png |
+  | 工作台 | harness_current_1280_light_v2.png | harness_current_1280_dark_v2.png |
+  | 特效画廊 | harness_effects_gallery_light_v2.png | harness_effects_gallery_dark_v2.png |
+  | 色卡 | harness_colorschart_light_v2.png | harness_colorschart_dark_v2.png |
+- tokens 明细与对比度实测、红绿移除验收见 qa/ui/theme/README.md。
+- T8 缩放证据（zoom 100/200/400 + offset）仍在：harness_zoom_100/200/400_light.png。
+
+## 6. T8 补修：双 .gesture 叠加吞掉拖拽事件（view-verify 复现 → 已修）
+
+- **根因**：plate 同时挂载 `.gesture(dragGesture, including: vm.editMode ? .none : .all)` 与 `.gesture(editGesture, including: vm.editMode ? .all : .none)`；非编辑模式下外层 editGesture 的 mask `.none` 会把内层 dragGesture 整个吞掉（事件级验证 0 次 onChanged）。T8 首轮只验证了数学/闭包链，**未验证事件到达**，属误判。
+- **修复**：改为单一条件手势 —— 抽出 `plateBase`，`Group { if vm.editMode { plateBase.gesture(editGesture) } else { plateBase.gesture(dragGesture) } }`，不再保留双 `.gesture` 叠加结构；双击居中保留；编辑模式不拖拽。
+- **事件到达级验证**（新增 `UIShot dragcheck`：真实 ContentView + 注入 VM + 合成 NSEvent 走 app 事件循环）：
+  - zoom=200 拖拽：`vm.offset` 从 (0,0) → **(112, -64)**，窗口像素位移 **689,040 px**（`t8_drag_before.png` / `t8_drag_after.png`）
+  - 编辑模式拖拽：`vm.offset` 保持 (0,0) ✔
+  - fit 模式拖拽：事件到达（`fitToWindow` → false，zoom=76.5），图恰好适配时 offset 保持 0（正确：无空间可平移）✔
+  - 结果：**DRAGCHECK PASS**，日志 `t8_dragcheck.log`
+- 复跑：`PERLER_REPO_ROOT=$PWD TMPDIR=$PWD/qa/ui/tmp qa/ui/render/.build/debug/UIShot dragcheck`
+## 7. P3 残余修复：滚轮/双指缩放锚点 y 轴镜像（view-verify R1）
+
+- **问题**：`PreviewInputCatcher.EventCatcherView` 默认非 flipped（左下原点），`self.convert(event.locationInWindow, from: nil)` 得到的 y 直接作为 SwiftUI 锚点（左上原点）→ 非居中锚点缩放时上下镜像。
+- **修复（最小改动）**：EventCatcherView `override var isFlipped: Bool { true }`（坐标与 SwiftUI 一致）+ 扣掉图版 16pt padding：`PreviewViewport.viewportPoint(fromPlatePoint:inset:)`；滚轮/双指 delta 方向未动（不改变缩放方向语义）。
+- **验证**：新增 `testViewportPointFromPlatePointAccountsForInsetAndTopLeftOrigin`；swift build 通过；swift test **111/111**；dragcheck 回归仍 DRAGCHECK PASS。
+- **独立复验（view-verify T10 §11，2026-10-21）**：isFlipped/inset/viewportPoint 4 点误差全 0；onZoom(2.0, 视口锚点 (177.2, 88.4)) @100%→200% → offset (128.8, +156.6)，与独立公式零误差，旧镜像值 −156.6 未出现 → **R1 通过**。仅剩人工滚轮验收（AX 限制）。
+- 未 commit/push。
+## 8. 人工验收清单（引用 view-verify 报告）
+
+自动化已覆盖事件链路/数学/像素位移/主题 tokens/对比度；**滚轮与双指真实手势**受 macOS AX 权限限制无法自动合成，需人工走查。清单见 view-verify 报告 `qa/verify/zoom_pan_and_theme_report.md` §6（9 条）：
+
+1. 非中心位置捏合/滚轮缩放：光标下内容尽量不动（R1 锚点最终验证点）
+2. 双指捏合缩放（触控板）
+3. 双指滚动平移
+4. 拖拽边界（大图至少 15% 可见，不丢图）
+5. 滑杆 + −/＋ + 百分比（交互自动切出适应窗口）
+6. 编辑模式回归（点击换色、拖拽禁用、双击居中）
+7. 亮/暗外观切换
+8. 开始页 hero（不拉伸/不裁切主体、双框/crop marks/图注）
+9. 拖拽极限（连续极端拖拽后仍在版心内）
+
+发现问题时把「操作 + 现象 + 截图」发 view-verify（同一 harness 可定位）。
