@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var showPDFModeDialog = false
     @State private var compareOriginal = false
     @State private var sourceImage: NSImage?
+    @State private var coverTargeted = false
 
     var body: some View {
         Group {
@@ -51,83 +52,126 @@ struct ContentView: View {
         vm.imagePath == nil && vm.lastResult == nil && !vm.isBusy
     }
 
-    // MARK: - 封面空状态（mockup_03）
+    // MARK: - 封面（左整块背景 hero + 右文案/操作列；T12）
 
     private var coverLayout: some View {
         VStack(spacing: 0) {
             masthead
             DoubleRule()
             HStack(spacing: 0) {
-                EmptyStateView(vm: vm,
-                               onChooseImage: chooseImage,
-                               onDrop: handleDrop)
-                    .frame(maxWidth: .infinity)
-                Hairline(vertical: true)
-                coverRail.frame(width: 380)
+                coverHero.frame(maxWidth: .infinity, maxHeight: .infinity)
+                Hairline(vertical: true, color: Tok.hairlineStrong)
+                coverColumn.frame(minWidth: 400, idealWidth: 430, maxWidth: 430)
             }
             Hairline()
             statusBar
         }
+        .onDrop(of: [UTType.fileURL], isTargeted: $coverTargeted) { providers in
+            handleDrop(providers)
+        }
     }
 
-    private var coverRail: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                SectionHeader(index: "A", title: "示例图版", trailing: "CATALOGUE")
-                    .padding(.top, 20)
-                VStack(spacing: 0) {
-                    ForEach(Array(vm.templates.prefix(5).enumerated()), id: \.element.id) { idx, t in
-                        Button { vm.loadTemplate(t.id) } label: {
-                            HStack(spacing: 12) {
-                                Text(String(format: "%02ld", idx + 1))
-                                    .font(TFont.didot(15)).foregroundStyle(Tok.accent)
-                                    .frame(width: 22, alignment: .leading)
-                                TemplateThumb(vm: vm, template: t, size: 46)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(t.name).font(TFont.pingfangMedium(12))
-                                        .foregroundStyle(Tok.ink)
-                                    Text("\(t.width) × \(t.height) · \(t.width * t.height) 颗")
-                                        .font(TFont.menlo(9.5)).foregroundStyle(Tok.inkMuted)
-                                }
-                                Spacer(minLength: 6)
-                                BrassArrow()
-                            }
-                            .frame(height: 58)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        Hairline(color: Tok.hairlineSoft)
-                    }
-                }
-
-                SectionHeader(index: "B", title: "快捷键", trailing: "KEYS")
-                    .padding(.top, 20)
-                VStack(spacing: 0) {
-                    keyRow("打开图片", "⌘ O")
-                    keyRow("生成图纸", "⌘ G")
-                    keyRow("缩放 / 重置", "⌘+ / ⌘− / ⌘0")
-                    keyRow("对比原图", "按住按钮")
-                }
-                .padding(.top, 2)
-
-                SectionHeader(index: "C", title: "输出", trailing: "OUTPUT")
-                    .padding(.top, 20)
-                VStack(spacing: 0) {
-                    keyRow("PNG 图纸", "3670 × 4270 px")
-                    keyRow("PDF", "A4 / 1:1 实物")
-                    keyRow("色卡", "MARD 221 · 4 套")
-                }
-
-                Spacer(minLength: 14)
-                HStack(spacing: 6) {
-                    Fleuron(size: 5)
-                    Text("所有处理在本机完成 · Python 引擎")
-                        .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
+    /// 左侧整块背景大图（无边距/无框住小图）：照片→拼豆对角过渡，底部 scrim + 左下奶油图注
+    /// 注意：图片不参与 HStack 理想宽度计算（GeometryReader 显式尺寸 + 铺底 Rectangle），
+    /// 否则 scaledToFill 的理想宽 ≈ 内容高×4/3 会把右列挤出窗口（view-verify T13 P2）。
+    private var coverHero: some View {
+        ZStack(alignment: .bottomLeading) {
+            Rectangle().fill(Tok.paperDeep)
+            if let hero = EditorialAssets.heroPhotoToBeadsCover {
+                GeometryReader { geo in
+                    Image(nsImage: hero)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: max(1, geo.size.width),
+                               height: max(1, geo.size.height))
+                        .clipped()
                 }
             }
-            .padding(.horizontal, 26)
-            .padding(.bottom, 16)
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0.42),
+                .init(color: Color(hex: 0x17120D, opacity: 0.74), location: 1.0),
+            ], startPoint: .top, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 7) {
+                MicroLabel("PLATE 00  ·  FROM PHOTOGRAPH TO BEAD",
+                           color: Color(hex: 0xF4EDE1), size: 9.5)
+                HStack(alignment: .top, spacing: 26) {
+                    coverCaption("PHOTOGRAPH", "清晰原片 · 保留明暗层次")
+                    coverCaption("BEADS", "逐级像素化 · MARD 221 映射")
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(.leading, 30)
+            .padding(.trailing, 24)
+            .padding(.bottom, 26)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
+    private func coverCaption(_ title: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            MicroLabel(title, color: Color(hex: 0xC9A063), size: 8.5, tracking: 1.8)
+            Text(text)
+                .font(TFont.pingfang(9))
+                .foregroundStyle(Color(hex: 0xE8DCC8))
+        }
+    }
+
+    /// 右侧 430pt 文案/操作列：eyebrow + 黄铜渐变标题 + standfirst + CTA + 快捷键/输出 + 本机说明
+    private var coverColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            MicroLabel("BEGIN A NEW PLATE  ·  开始一张新图纸")
+                .padding(.top, 26)
+            Text("从一张照片，")
+                .font(TFont.songtiBold(38))
+                .foregroundStyle(Tok.ink)
+                .padding(.top, 10)
+            Text("到 3,600 颗豆。")
+                .font(TFont.songtiBold(38))
+                .foregroundStyle(Tok.brassGradient)
+            Text("把任意图片排成一张可打印的拼豆图纸 —— 自动映射 MARD 221 色卡，生成行列标号、色号图例与耗材清单。")
+                .font(TFont.pingfang(12)).foregroundStyle(Tok.inkSoft)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+            Button("选择图片 …") { chooseImage() }
+                .buttonStyle(InkButtonStyle(height: 40))
+                .frame(width: 210)
+                .padding(.top, 18)
+            HStack(spacing: 6) {
+                Text(coverTargeted ? "松开以开始排版" : "或拖入图片  ·  ⌘O")
+                    .font(TFont.pingfang(10.5))
+                    .foregroundStyle(coverTargeted ? Tok.accent : Tok.inkMuted)
+                if coverTargeted { Fleuron(size: 5) }
+            }
+            .padding(.top, 8)
+            DoubleRule().padding(.top, 18)
+            MicroLabel("SHORTCUTS  ·  快捷键").padding(.top, 14)
+            VStack(spacing: 0) {
+                keyRow("打开图片", "⌘ O")
+                keyRow("生成图纸", "⌘ G")
+                keyRow("缩放 / 重置", "⌘+ / ⌘− / ⌘0")
+                keyRow("对比原图", "按住按钮")
+            }
+            .padding(.top, 2)
+            MicroLabel("OUTPUT  ·  输出").padding(.top, 14)
+            VStack(spacing: 0) {
+                keyRow("PNG 图纸", "3670 × 4270 px")
+                keyRow("PDF", "A4 / 1:1 实物")
+                keyRow("色卡", "MARD 221 · 4 套")
+            }
+            .padding(.top, 2)
+            Spacer(minLength: 10)
+            HStack(spacing: 6) {
+                Fleuron(size: 5)
+                Text("所有处理在本机完成 · 不上传云端")
+                    .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
+            }
+            .padding(.bottom, 18)
+        }
+        .padding(.horizontal, 30)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Tok.paper)
     }
 
     private func keyRow(_ label: String, _ key: String) -> some View {
@@ -1185,132 +1229,6 @@ struct TopColor: Identifiable {
 
 // MARK: - 空状态封面（mockup_03）
 
-struct EmptyStateView: View {
-    @ObservedObject var vm: AppViewModel
-    var onChooseImage: () -> Void
-    var onDrop: ([NSItemProvider]) -> Bool
-    @State private var targeted = false
-
-    private let heroAspect: CGFloat = 2400.0 / 1333.0
-    private let heroWidth: CGFloat = 520
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 10) {
-                MicroLabel("PLATE 00  ·  FROM PHOTOGRAPH TO BEAD")
-                Fleuron(size: 5)
-                MicroLabel("BEGIN A NEW PLATE", color: Tok.inkMuted, size: 8.5)
-            }
-            .padding(.top, 16)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text("从一张照片，").font(TFont.songtiBold(44)).foregroundStyle(Tok.ink)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("到").font(TFont.songtiLight(44)).foregroundStyle(Tok.ink)
-                    Text("3,600 颗豆。").font(TFont.songtiBold(44))
-                        .foregroundStyle(Tok.brassGradient)
-                }
-            }
-            .padding(.top, 5)
-
-            Text("把任意图片排成一张可打印的拼豆图纸 —— 自动映射 MARD 221 色卡，生成行列标号、色号图例与耗材清单。")
-                .font(TFont.pingfang(12)).foregroundStyle(Tok.inkSoft)
-                .lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: 620, alignment: .leading)
-                .padding(.top, 7)
-
-            heroPlate
-                .padding(.top, 12)
-
-            captionRow
-                .padding(.top, 8)
-
-            DoubleRule().padding(.top, 12)
-            dropStrip.padding(.top, 11)
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 52)
-        .padding(.trailing, 30)
-        .padding(.bottom, 12)
-        .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
-            onDrop(providers)
-        }
-    }
-
-    /// 开始页 hero：清晰照片 → 逐级像素化 → 拼豆图纸（素材由 Lead 提供）
-    private var heroPlate: some View {
-        ZStack {
-            Rectangle().fill(Tok.paperMat)
-            if let hero = EditorialAssets.heroPhotoToBeads {
-                Image(nsImage: hero)
-                    .resizable()
-                    .aspectRatio(heroAspect, contentMode: .fit)
-                    .frame(width: heroWidth)
-                    .padding(10)
-            } else {
-                Rectangle().fill(Tok.paperDeep)
-                    .frame(width: heroWidth, height: heroWidth / heroAspect)
-                    .overlay(
-                        VStack(spacing: 6) {
-                            Fleuron(size: 7)
-                            Text("PLATE 00").font(TFont.didot(13))
-                                .foregroundStyle(Tok.inkMuted)
-                        }
-                    )
-                    .padding(10)
-            }
-            // 双框线：外铜内浅
-            Rectangle().stroke(Tok.hairlineStrong, lineWidth: 1.5)
-            Rectangle().stroke(Tok.hairline, lineWidth: 0.5).padding(5)
-            CropMarks(color: Tok.hairlineStrong, len: 12).padding(11)
-        }
-        .frame(width: heroWidth + 22, height: heroWidth / heroAspect + 22)
-    }
-
-    private var captionRow: some View {
-        HStack(alignment: .top, spacing: 24) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("PLATE 00").font(TFont.didot(12)).foregroundStyle(Tok.accent)
-                Text("从一张照片，到 3,600 颗豆")
-                    .font(TFont.pingfang(10)).foregroundStyle(Tok.inkSoft)
-            }
-            Spacer()
-            photoBeadsColumn("PHOTOGRAPH", "清晰原片 · 保留明暗层次")
-            photoBeadsColumn("BEADS", "逐级像素化 · MARD 221 映射")
-        }
-        .frame(width: heroWidth + 22)
-    }
-
-    private func photoBeadsColumn(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            MicroLabel(title, color: Tok.accent, size: 8.5, tracking: 1.8)
-            Text(text).font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
-        }
-    }
-
-    private var dropStrip: some View {
-        HStack(spacing: 14) {
-            Button("选择图片 …") { onChooseImage() }
-                .buttonStyle(InkButtonStyle(height: 38))
-                .frame(width: 190)
-            Text("或拖入图片  ·  ⌘O")
-                .font(TFont.pingfang(10.5)).foregroundStyle(Tok.inkSoft)
-            Spacer()
-            HStack(spacing: 5) {
-                Fleuron(size: 4)
-                Text("本机处理 · 不上传云端")
-                    .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Rectangle().fill(Tok.paperMat.opacity(targeted ? 0.9 : 0.5)))
-        .overlay(Rectangle().stroke(targeted ? Tok.accent : Tok.hairline,
-                                    lineWidth: targeted ? 1.5 : 1))
-    }
-}
-
 // MARK: - 特效画廊（sheet，Phase 1：编辑式卡片替代 Toggle 墙）
 
 struct EffectsGalleryView: View {
@@ -1739,44 +1657,7 @@ private struct NSTextFieldBridge: NSViewRepresentable {
     }
 }
 
-// MARK: - 模板缩略图（engine template_image 异步加载）
-
-struct TemplateThumb: View {
-    @ObservedObject var vm: AppViewModel
-    let template: TemplateInfo
-    var size: CGFloat = 46
-    var fit = false
-    @State private var image: NSImage?
-
-    var body: some View {
-        ZStack {
-            Rectangle().fill(Tok.paperMat)
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.none)
-                    .aspectRatio(contentMode: fit ? .fit : .fill)
-                    .saturation(0.82)
-                    .padding(fit ? 6 : 0)
-                Rectangle().fill(Tok.paper.opacity(0.05))
-            }
-        }
-        .frame(width: size, height: size)
-        .clipped()
-        .overlay(Rectangle().stroke(Tok.hairline, lineWidth: 1))
-        .onAppear(perform: load)
-    }
-
-    private func load() {
-        guard image == nil, let engine = vm.engine else { return }
-        engine.request(op: "template_image", params: ["template_id": template.id]) { result in
-            guard case .success(let r) = result,
-                  let path = r["image_path"] as? String,
-                  let img = NSImage(contentsOfFile: path) else { return }
-            image = img
-        }
-    }
-}
+// MARK: - 图片缩略图
 
 struct ImageThumb: View {
     let image: NSImage?

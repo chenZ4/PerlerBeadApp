@@ -11,9 +11,9 @@ import AppKit
 /// 会编译失败；因此用 #if SWIFT_PACKAGE 隔离。
 enum EditorialAssets {
 
-    /// 开始页 hero：同一张老鹰照片从左（清晰）渐变到右（拼豆图纸）。
-    static var heroPhotoToBeads: NSImage? {
-        loadImage("hero_photo_to_beads", ext: "jpg")
+    /// 开始页封面大图（4:3）：整块左侧背景，左上清晰照片对角过渡到右下拼豆。
+    static var heroPhotoToBeadsCover: NSImage? {
+        loadImage("hero_photo_to_beads_cover", ext: "jpg")
     }
 
     static func loadImage(_ name: String, ext: String) -> NSImage? {
