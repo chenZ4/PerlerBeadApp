@@ -11,10 +11,64 @@
 
 ---
 
+# 2.6.0 生成图/PDF editorial 统一最终门禁复测（T15/T17/T18，2026-10-22 00:26–00:30）
+
+> 本节是最新门禁终态（由 T18 执行）；下方 2.5.1 / 2.5.0 / T7 段落保留为历史对照。
+> 证据归档：2.6.0 -> qa/gates/logs/final/；2.5.1 -> qa/gates/logs/final_2.5.1/；2.5.0 -> qa/gates/logs/final_2.5.0/；T7/2.2.0 -> qa/gates/logs/final_2.2.0/。
+
+## A. 背景
+
+- **T15（effects-qa）生成图/PDF editorial 风格统一**：图纸 PNG / 成品 finished / PDF（A4、BOM、1:1、bw）/ dark_chart 全部改为老钱风 token（paper #F4EDE1、espresso #17120D、黄铜 accent、发丝线、PLATE/MATERIALS 版式），并在 core/models.py 与 DesignSystem.swift 之间对齐 17 个颜色 token（T17 逐项 δ=0）。
+- **P2 CJK tofu 修复**：图纸图例「N 颗」、页脚「约 … cm · 5mm/颗」原用 Menlo(mono) 整串绘制导致中文缺字形 tofu；修复为 CJK 感知混排（_text_runs/_draw_mixed_text：数字/ASCII 用 mono、中文用 body/PingFang 分段绘制）。新增 2 条守卫断言：含 CJK 的串禁用等宽字体；「约/颗」必须归 CJK 段。
+- **T17 独立验证全 PASS**：像素/OCR/PDF/token/golden 六类证据；P2 修复后复验无回退（qa/verify/style_unification_report.md）。
+- 门禁时 HEAD = 0151973，工作区含 2.6.0 未提交改动（core/effects/filters.py、core/models.py、core/processor.py、core/version.py=2.6.0、tests/run_tests.py；**app/ 与 ui/ 本轮未改**，swift 侧 111 不变）。
+- 本轮为只读门禁复测：未改源码/测试，未 git commit/push。
+
+## B. 最终门禁终态（严格顺序、无并发）
+
+| # | 步骤 | 命令 | 耗时 | 退出码 | 通过 | 失败 | 用户数据副作用 | 日志 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | run_tests | conda run -n pindou python tests/run_tests.py | 45.4s | 0 | **279** | **0** | **0** | qa/gates/logs/final/run_tests.log |
+| 2 | gui_smoke | conda run -n pindou python tests/gui_smoke.py | 18.1s | 0 | **92** | **0** | **0** | qa/gates/logs/final/gui_smoke.log |
+| 3 | stress_protocol | conda run -n pindou python tests/stress_protocol.py | 63.3s | 0 | **12** | **0** | **0** | qa/gates/logs/final/stress_protocol.log |
+| 4 | swift test（PERLER_* env 注入） | cd app && swift test --disable-sandbox | 41.3s | 0 | **111** | **0** | **0** | qa/gates/logs/final/swift_test_isolated.log |
+| 5 | swift build | cd app && swift build --disable-sandbox | 0.9s | 0 | — | — | **0** | qa/gates/logs/final/swift_build.log |
+| — | **合计** | — | **≈169s** | — | **494** | **0** | **0** | qa/gates/logs/final/isolation_diff.json |
+
+- **精确数字：279 + 92 + 12 + 111 = 494 / 0**，与 Lead 预期一致。
+- 用户数据隔离：5 个步骤对 track/、根 history.json/queue_state.json/app_settings.json/my_colors.json、output/、data/ 的前后 sha256 全部一致（side_effects_total = 0）；门禁期间根 json 内容/mtime 均未变。证据 qa/gates/logs/final/isolation_diff.json。
+- 失败 0、flaky 0。
+
+## C. 测试数变化（2.5.1 → 2.6.0：249 → 279，净 +30）
+
+| 来源 | 变化 | 说明 |
+|---|---|---|
+| T15 editorial 视觉结构回归 | **+28** | 图纸 paper/无旧蓝/行列标号/图例页脚/对比度、finished 背景、dark_chart、PDF A4+BOM+bw 等 |
+| P2 CJK tofu 守卫 | **+2** | 含 CJK 串禁用 mono 字体；「约/颗」归 CJK 段 |
+| 断言更新（语义随 token 变） | 0（1 条重命名） | 「hex_to_rgb_safe 非法回退灰色」→「…回退暖发丝线」（DEFAULT_GRID_COLOR 改为暖发丝线，属语义同步，非弱化） |
+| **合计** | **+30** | 249 + 30 = 279 |
+
+- 逐 PASS 名称核对（2.5.1 249 项 → 2.6.0 279 项 multiset）：新增 31、移除 1（即上述那条重命名），净 +30；无其它删除/弱化。
+- swift 侧 111 不变（app/ 本轮未改）。
+
+## D. golden「未变化」的语义说明（正确而非漏测）
+
+- golden.json / golden_matrix.json 的哈希对象是 **finished.tobytes()**（成品纯珠像素；测试源 160×120 全覆盖，无背景边/无文字/无字体），主题层只改「图纸底色/文字/PDF 页面/chart 背景」，不影响 finished 纯珠区 → 哈希应保持不变。
+- 实测：**git diff tests/golden/ 为空**（与 HEAD 一致）；8 个 matrix 哈希断言 + golden 哈希/尺寸断言全部 PASS。
+- 底色/文字/字体变化并未被漏测：由 T15 新增的 28 条 visual 结构断言 + P2 的 2 条 CJK 守卫覆盖（含 finished 背景=paper、dark_chart 背景、透明 finished 露 paper 等）；T17 独立用像素/OCR 复验。
+
+## E. 状态与遗留
+
+- 当前工作区（门禁后）：2.6.0 改动未提交（core/effects/filters.py、core/models.py、core/processor.py、core/version.py=2.6.0、tests/run_tests.py；app/、ui/ 未动）；HEAD 仍为 0151973。提交由 Lead 执行，本门禁未 commit/push。
+- 沿用遗留风险：① bare swift test 需 CI 注入 PERLER_* env；② stress S5 在 ps 不可用时内存断言恒真；③ DSH 沙箱下 swift test/build 需 --disable-sandbox；④ UI 外观仍以独立验证 + 截图人工验收为主（无审美快照断言）。
+- 注：门禁前 app_settings.json 已于 00:02:12 被 T15/T17 期间的其它运行改动（内容是测试设置值）；本门禁 5 步期间未再改动（side_effects=0），不在本门禁责任范围。
+
+---
+
 # 2.5.1 封面改版最终门禁复测（T12/T13/T14，2026-10-21 23:52–23:58）
 
 > 本节是最新门禁终态（由 T14 执行）；下方 2.5.0 / T7 段落保留为历史对照。
-> 证据归档：2.5.1 -> qa/gates/logs/final/；2.5.0 -> qa/gates/logs/final_2.5.0/；T7/2.2.0 -> qa/gates/logs/final_2.2.0/。
+> 证据归档：2.5.1 -> qa/gates/logs/final_2.5.1/；2.5.0 -> qa/gates/logs/final_2.5.0/；T7/2.2.0 -> qa/gates/logs/final_2.2.0/；当前 qa/gates/logs/final/ 保存 2.6.0 证据。
 
 ## A. 背景
 

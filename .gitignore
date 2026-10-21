@@ -392,6 +392,9 @@ qa/ui/render/
 qa/verify/harness/.build/
 qa/verify/harness/Sources/AppCopy/
 qa/verify/evidence/
+qa/verify/style/ocr
+qa/effects/style/*.pdf
+qa/effects/style/_tmp_*
 qa/lead/hero/
 qa/**/__pycache__/
 

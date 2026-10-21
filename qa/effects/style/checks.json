@@ -1,0 +1,234 @@
+{
+ "chart_29x29_cell60.png": {
+  "size": [
+   1810,
+   2480
+  ],
+  "grid": [
+   29,
+   29
+  ],
+  "cell_size": 60,
+  "beads": 841,
+  "colors": 35,
+  "bg_top_right": [
+   244,
+   237,
+   225
+  ],
+  "bg_bottom": [
+   244,
+   237,
+   225
+  ],
+  "old_blue_px": 0,
+  "paper_px": 1146684,
+  "ink_px": 33213,
+  "accent_px": 1987,
+  "hairline_strong_px": 10280,
+  "paper_deep_px": 226032,
+  "legend_cols": 5,
+  "dark_ink_px": 0,
+  "dark_accent_px": 0,
+  "file_bytes": 198301
+ },
+ "chart_60x60_cell20.png": {
+  "size": [
+   1270,
+   2132
+  ],
+  "grid": [
+   60,
+   60
+  ],
+  "cell_size": 20,
+  "beads": 3600,
+  "colors": 52,
+  "bg_top_right": [
+   244,
+   237,
+   225
+  ],
+  "bg_bottom": [
+   244,
+   237,
+   225
+  ],
+  "old_blue_px": 0,
+  "paper_px": 1012128,
+  "ink_px": 4711,
+  "accent_px": 4171,
+  "hairline_strong_px": 9752,
+  "paper_deep_px": 139236,
+  "legend_cols": 5,
+  "dark_ink_px": 0,
+  "dark_accent_px": 0,
+  "file_bytes": 287545
+ },
+ "chart_100x100_cell16.png": {
+  "size": [
+   1670,
+   2580
+  ],
+  "grid": [
+   100,
+   100
+  ],
+  "cell_size": 16,
+  "beads": 10000,
+  "colors": 59,
+  "bg_top_right": [
+   244,
+   237,
+   225
+  ],
+  "bg_bottom": [
+   244,
+   237,
+   225
+  ],
+  "old_blue_px": 0,
+  "paper_px": 1419542,
+  "ink_px": 5248,
+  "accent_px": 6743,
+  "hairline_strong_px": 12024,
+  "paper_deep_px": 176232,
+  "legend_cols": 5,
+  "dark_ink_px": 0,
+  "dark_accent_px": 0,
+  "file_bytes": 483827
+ },
+ "chart_cell16_small.png": {
+  "size": [
+   1030,
+   1748
+  ],
+  "grid": [
+   60,
+   60
+  ],
+  "cell_size": 16,
+  "beads": 3600,
+  "colors": 38,
+  "bg_top_right": [
+   244,
+   237,
+   225
+  ],
+  "bg_bottom": [
+   244,
+   237,
+   225
+  ],
+  "old_blue_px": 0,
+  "paper_px": 679748,
+  "ink_px": 4591,
+  "accent_px": 4171,
+  "hairline_strong_px": 7448,
+  "paper_deep_px": 106670,
+  "legend_cols": 5,
+  "dark_ink_px": 0,
+  "dark_accent_px": 0,
+  "file_bytes": 201432
+ },
+ "chart_dark_chart_29x29.png": {
+  "size": [
+   1810,
+   2480
+  ],
+  "grid": [
+   29,
+   29
+  ],
+  "cell_size": 60,
+  "beads": 841,
+  "colors": 35,
+  "bg_top_right": [
+   23,
+   18,
+   13
+  ],
+  "bg_bottom": [
+   23,
+   18,
+   13
+  ],
+  "old_blue_px": 0,
+  "paper_px": 7,
+  "ink_px": 30477,
+  "accent_px": 0,
+  "hairline_strong_px": 0,
+  "paper_deep_px": 0,
+  "legend_cols": 5,
+  "dark_ink_px": 2736,
+  "dark_accent_px": 12267,
+  "file_bytes": 198783
+ },
+ "finished_60x60_cell20.png": {
+  "size": [
+   1200,
+   1200
+  ],
+  "file_bytes": 13657
+ },
+ "finished_transparent_paper_bg.png": {
+  "size": [
+   960,
+   960
+  ],
+  "paper_hole_px": 685327,
+  "corner_top_right": [
+   244,
+   237,
+   225
+  ],
+  "file_bytes": 5489
+ },
+ "pdf_a4_page_render.jpg": {
+  "size": [
+   2480,
+   3507
+  ],
+  "bg": [
+   244,
+   237,
+   225
+  ],
+  "old_blue": false
+ },
+ "pdf_bom_page1_render.jpg": {
+  "size": [
+   2480,
+   3507
+  ],
+  "bg": [
+   244,
+   237,
+   225
+  ],
+  "pages": 4,
+  "old_blue": false
+ },
+ "_tokens": {
+  "paper": [
+   244,
+   237,
+   225
+  ],
+  "ink": [
+   42,
+   33,
+   24
+  ],
+  "accent": [
+   138,
+   90,
+   51
+  ],
+  "dark_bg": [
+   23,
+   18,
+   13
+  ]
+ }
+}
