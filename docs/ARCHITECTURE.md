@@ -1,7 +1,7 @@
 # 拼豆图纸 · 工程说明（中文）
 
 > 面向长期维护的开发说明：项目结构、分层设计、数据流、关键语义、测试与规范。
-> 最后更新：2026-08-13（OOP 化重构完成版）
+> 最后更新：2026-10-21（2.4.0 特效质量重做 + 编辑杂志风 UI + 自动预览）
 
 ## 1. 项目结构
 
@@ -11,7 +11,7 @@ PerlerBeadApp/
 │   ├── models.py              # 领域模型：GenerateParams/QueueItem/UndoSnapshot/BatchResult
 │   │                          #   纯函数：hex_to_rgb、parse_* 钳制、link_dimensions 比例联动
 │   ├── processor.py           # ImageProcessor：图片→图纸渲染管线（含 exact_grid/fit_box 语义）
-│   ├── colors.py              # 色卡加载/匹配（numpy 加权 RGB）+ display_to_internal 换算
+│   ├── colors.py              # 色卡加载/匹配（CIELAB D65 感知色距）+ display_to_internal 换算
 │   ├── templates.py           # 内置模板库（data/templates/*.json → PIL 图）
 │   ├── history_manager.py     # HistoryManager（支持自定义 file_path 便于测试隔离）
 │   ├── settings.py            # SettingsStore 类（偏好+队列持久化；旧模块函数保留 dict 兼容）
@@ -34,17 +34,18 @@ PerlerBeadApp/
 │   ├── theme.py / fonts.py    # 主题与字体
 ├── app/                       # SwiftUI 版（macOS 14+）
 │   └── Sources/PerlerApp/
-│       ├── AppViewModel.swift # 交互逻辑（可测试：模拟用户操作+真实引擎）
-│       ├── ContentView.swift  # 主界面（GridFieldRow 独立 View 结构体）
+│       ├── AppViewModel.swift # 交互逻辑（可测试：模拟用户操作+真实引擎；含参数变更自动预览防抖）
+│       ├── ContentView.swift  # 编辑杂志风主界面（报头/三栏/图版图注/特效画廊 sheet）
+│       ├── DesignSystem.swift # 设计 tokens/字体/原子组件（亮暗双主题）
 │       ├── Engine.swift       # 引擎协议客户端（stdio 行协议，主线程回调）
-│       ├── Models.swift       # GenerateResult 等协议模型
+│       ├── Models.swift       # GenerateResult 等协议模型（含 warnings 兼容解码）
 │       └── ColorChartView.swift
 ├── core_server.py             # 引擎服务化入口（JSON 行协议，Swift 版调用）
 ├── data/                      # 色卡 JSON（4 套）+ 内置模板 JSON（6 个）
 ├── tests/
-│   ├── run_tests.py           # 引擎+模型+服务层自动化（148 项）
-│   └── gui_smoke.py           # Tk 版 GUI 冒烟（69 项，零弹窗零交互）
-└── app/Tests/PerlerAppTests/  # Swift 测试（51 项）
+│   ├── run_tests.py           # 引擎+模型+服务层自动化（249 项，2026-10-21 基线）
+│   └── gui_smoke.py           # Tk 版 GUI 冒烟（92 项，零弹窗零交互）
+└── app/Tests/PerlerAppTests/  # Swift 测试（84 项，含自动预览 6 项）
 ```
 
 ## 2. 分层设计（Tk 版 OOP 化后的目标架构）
@@ -119,6 +120,16 @@ stdio 行协议（JSON 一行一条）：
 
 Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回调强制主线程。
 
+**响应 warnings 字段（2026-10-21）**：`generate` / `edit` 响应可带 `warnings: [String]`，
+承载非致命提示：大头未检测到人脸、背景去除目标色未触边而跳过、几何特效改写网格、
+抖动 strength 被钳制、未知特效 id 等。Swift `GenerateResult` 兼容解码（缺失=[]），
+由 `AppViewModel` 拼进状态栏；旧客户端忽略该字段即可，属向后兼容扩展。
+
+**参数变更自动预览（2026-10-21）**：`AppViewModel` 的网格/特效参数 `didSet` 与 UI 显式
+`uiNotifyParametersChanged()` 双通道调用 `parametersDidChange()` → 置 `needsRegenerate`
+并 500ms 防抖触发 `scheduleAutoPreview()`；忙时排队、手动「生成」优先并取消 pending。
+预览重算走同一 `generate` op（非独立低清通道），100×100 网格约 1s。
+
 ## 4. 比例模式语义（核心易错点）
 
 | 模式 | 引擎参数 | 行为 |
@@ -164,6 +175,13 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
   KeyRelease 不触发 widget 绑定，实时联动用例直调 `settings_panel._on_key_release`。
 - 测试数据隔离：`HistoryManager(file_path=...)`、临时目录；不得污染仓库根目录的
   `history.json` / `app_settings.json` / `queue_state.json`。
+  **2026-10-21 起**：run_tests/gui_smoke/stress_protocol 顶层将 `OUTPUT_DIR`/`TRACK_DIR`/
+  `SETTINGS_FILE`/`QUEUE_FILE`/`HISTORY_FILE`/`MY_COLORS_FILE` 全部重定向到 tempdir（子进程
+  通过 `engine_bootstrap.py` 注入后再 import），跑测试不再删除/改写用户 `track/` 与根 JSON；
+  `core_server.py` 支持 `PERLER_*` 环境变量覆盖路径，CI/最终门禁对 `swift test` 也做零副作用校验。
+- **门禁有效性边界**：4 套件共 437 项全绿只证明代码路径/结构断言；特效视觉质量、UI 外观
+  与「切特效是否自动重绘」尚无自动断言（见 `qa/gates/report.md` 盲区清单）。改特效/UI 必须
+  人工看前后对比图（`qa/effects/fixes/`、`qa/ui/after/`）或补视觉回归。
 - 已知无害现象：`run_tests` 中「文件不存在返回 None」用例会打印一条引擎 traceback
   （processor 的容错日志），属预期输出，不影响结果。
 
@@ -180,11 +198,20 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
 
 ## 7. 已知限制
 
-- Tk 版暂无特效面板（特效仅在 Swift 版暴露，引擎层已支持，15 项全暴露）。
+- Tk 版暂无特效面板（特效仅在 Swift 版暴露）；Tk 界面尚未做编辑杂志风重设计（Phase 4）。
 - 1:1 PDF 的出血/页码为栅格绘制，拼贴效果需打印后人工确认。
 - Windows 端 Tk 主题与快捷键逻辑已实现，需在 Windows 机器跑一次 gui_smoke 确认。
-- 邻接描边（outline_cell）语义是「所有相邻异色对画线」：多色细节图上会形成网状
-  （默认已不描外轮廓），建议配合「限色数」使用。
-- 大头特效（chibi）依赖 OpenCV 人脸检测（requirements 已含）；缺失时静默跳过不报错。
-- 色卡匹配为 CIELAB（D65）感知距离：旧 golden 基准已于 2026-09-08 重生成
-  （`tests/golden/update_golden.py --matrix`），再改匹配算法需同步重生成。
+- 邻接描边（outline_cell）2026-10-21 已改为「相邻格 CIELAB ΔE 超阈值 + 分位自适应」：
+  照片不再全图黑网，但深色低对比照片的描边可能又太弱（描边珠约 27%，含基线暗珠）；
+  可调 `min_delta_e`/`percentile`/`width`。
+- 线稿描边（outline_edge）改为网格尺度 DoG+滞后阈值+去孤点；对复杂照片仍是「风格化线稿」，
+  不等同于人工勾线。
+- 霓虹（neon）仍是 Color+Brightness 近似，未实现真正的暗底/辉光（T5 未重做，待后续）。
+- 大头（chibi）依赖 OpenCV Haar 人脸检测；无脸/缺 cv2 时返回 warning 并跳过，不再静默；
+  真实人脸路径仅用 monkeypatch 验证，缺真人素材回归。
+- 风格色板（preset）改为保结构量化后再映射，照片不会被洗白，但仍是强风格化（用色 ≤ 预设色数）。
+- 特效画廊目前无逐项实时缩略图（Phase 2，需新增 effectPreviews 协议）；现为编号卡片 + 参数 + 前后对比。
+- 色卡匹配为 CIELAB（D65）感知距离：golden 基准于 2026-09-08 与 2026-10-21（outline_cell 语义变更）
+  重生成（`tests/golden/update_golden.py --matrix`），再改匹配/特效算法需同步重生成。
+- XCUITest 不在 4 套交付门禁内，且需要 macOS 自动化权限；本机 `AXIsProcessTrusted=false`，
+  无法自动化驱动真实 app 选图（UI 验证用真机空状态截图 + 同源码离屏 harness）。

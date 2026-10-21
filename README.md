@@ -21,7 +21,8 @@
 - 导出：PNG / PDF（适应 A4 单页 或 1:1 实物大小 5mm/颗 多页拼接，含出血与页码）
 - 批量队列：快照设置、缩略图、取消、防覆盖文件名、断点恢复
 - 历史记录（自动迁移旧格式）、设置持久化、撤销（结构化快照）、快捷键、拖拽选图
-- Swift 版特效库 **15 项全暴露**（描边/灰度/抖动/限色/风格预设/画面调整/裁剪/镜像/赛璐璐/霓虹/双色调/背景去除/大头等，带参数控件）、手动格子编辑（点击换色/撤销）、进度追踪（自动保存续做）、色卡窗口
+- Swift 版特效库 **15 项全暴露**（描边/灰度/抖动/限色/风格预设/画面调整/裁剪/镜像/赛璐璐/霓虹/双色调/背景去除/大头等，带参数控件）、**参数变更 500ms 防抖自动重渲染预览**（无需再点生成）、非致命提示（如大头未检测到人脸）显示在状态栏、手动格子编辑（点击换色/撤销）、进度追踪（自动保存续做）、色卡窗口
+- Swift 版采用**编辑杂志风界面**（2.4.0：报头/编号章节/图版图注/编辑式排版 + 耗材 inspector，亮暗双主题）
 
 ## 环境准备
 
@@ -61,12 +62,21 @@ cd app && xcodegen generate
 xcodebuild test -project PerlerApp.xcodeproj -scheme PerlerApp -destination 'platform=macOS'
 ```
 
-UI 测试已本地验证 3/3（启动+引擎初始化、模板→生成 E2E、拖拽安全）。
+XCUITest 属可选观察项：需要 XcodeGen 生成工程，且依赖 macOS 自动化权限；**不在 4 套交付门禁内**，本仓库当前未提供可核验的通过记录（详见 [qa/gates/report.md](qa/gates/report.md)）。
 注意：不要给 xcodebuild 加 `CODE_SIGNING_ALLOWED=NO`，未签名 Runner 会被 macOS 拒绝启动；
 工程内已配置 ad-hoc 签名（project.yml），无需证书。
 
-当前基线：`run_tests` 214 项 / `gui_smoke` 92 项 / `stress_protocol` 12 项 / `swift test` 78 项，全部通过。
+当前基线（2026-10-21 独立复测，顺序执行）：`run_tests` 249 项 / `gui_smoke` 92 项 / `stress_protocol` 12 项 / `swift test` 84 项，共 437 项全绿。
+注意：测试套件会写共享 `output/`（并可能裁剪旧产物），必须顺序执行；不要并发跑。
 CI：push/PR 自动跑（GitHub Actions：Python 双平台 + Swift + Windows Tk 冒烟 + UI 测试观察项）。
+
+## QA 与 2.4.0 质量报告
+
+- 独立 QA（特效视觉复现/门禁有效性/测试污染）与修复证据：[qa/](qa/)（报告 + mockup + 截图 + 可复跑脚本）
+- 特效「代码可行但效果不可行」根因与修复前后数据：[qa/effects/report.md](qa/effects/report.md) / [qa/effects/T5_report.md](qa/effects/T5_report.md)
+- UI 审计与编辑杂志风设计/落地：[qa/ui/audit.md](qa/ui/audit.md) / [重构 mockup](qa/ui/mockups/mockup_01_main_1280.png)
+- 开源算法/设计参考（含 license）：[qa/research/report.md](qa/research/report.md)
+- 门禁复测与测试有效性盲区：[qa/gates/report.md](qa/gates/report.md)
 
 ## 工程说明
 

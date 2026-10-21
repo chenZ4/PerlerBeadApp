@@ -495,3 +495,79 @@ float→int / grid_color 五种输入 / settings 类型清洗。
 
 原 flaky 项 `generate 自动触发裁剪（canary 已清理）` 已稳定通过。
 Golden 矩阵哈希全部一致（透明修复不影响无 alpha 基准图）。
+
+---
+
+# 5. 独立 QA 与 2.4.0 特效/UI 重做（2026-10-21）
+
+执行方式：4 个并行子智能体独立取证（特效视觉复现 / UI 审计 / 门禁验证 / 开源参考）+ Lead 终审。
+详细证据：[qa/](qa/)（报告、mockup、截图、可复跑脚本）。
+
+## 5.1 门禁复测（严格顺序执行，不可并发）
+
+| 套件 | 基线（第 4 章） | 2.4.0 终态 | 说明 |
+|---|---|---|---|
+| `tests/run_tests.py` | 230 | **249** | +19 = 18 视觉结构回归 + 1 协议 warnings；无既有用例删除/弱化 |
+| `tests/gui_smoke.py` | 92 | **92** | 测试数据改为 tempdir 隔离，断言不变 |
+| `tests/stress_protocol.py` | 12 | **12** | 同上 |
+| `swift test` | 78 | **84** | +6 自动预览（AutoPreviewTests） |
+| **合计** | **412** | **437** | 0 失败 / 0 flaky |
+
+附加验证：`cd app && swift build` 通过；4 套件 + swift build 的用户数据副作用 sha256 快照 = **0**
+（修复前 run_tests 会删除整个仓库 `track/`、gui_smoke 会删根 `app_settings.json` / `queue_state.json`）。
+
+## 5.2 「特效代码可行但效果不可行」——根因与修复
+
+T1 实测：协议 15/15 特效与直接引擎逐像素一致、全部 ok；但真实使用中仅 6 项 A 级，6 项 D 级。
+门禁全绿的原因：特效用例只断言不崩溃/尺寸/装配，无视觉断言（7 项把实现换成 no-op 仍全绿）。
+
+| 缺陷 | 修复前 | 修复后 |
+|---|---|---|
+| 改特效开关后预览不重算（P0） | 15 个 Toggle 无 onChange，仅手动「生成」 | 参数变更 500ms 防抖自动重渲染；脏标记/「正在刷新预览」/手动优先 |
+| 邻接描边全图黑网 | 照片描边珠 65.9%（风景 71.9%） | 27.3%（风景 13.3%）；照片不再黑网、平涂仍保留轮廓 |
+| 线稿描边是孤立噪点 | 变更格连续性 13.4% | 85.5%（卡通 87.9%），网格尺度 DoG + 滞后阈值 + 去孤点 |
+| 赛璐璐压暗/串色 | 卡通 L 85.4→62.9、色相漂移 158° | L 85.4→85.1、色相漂移 11.6°（边缘保留 + Lab k-means 平涂） |
+| 风格色板洗白 | 照片 L +40.3、近白珠 28.4% | L +6.0、近白 0%、用色 5（保结构量化后映射预设色） |
+| 透明 PNG 特效丢 alpha | grayscale/cel/duotone 耗材 918→3600 | 918 全保持 |
+| 背景去除误删白色主体 | 主体删除率 100% | 0%（边界连通域 + auto 取色 + warning） |
+| chibi 无脸静默失效 | 无任何反馈 | 返回 warning，状态栏可见（大头默认跳过） |
+| crop 默认空操作 / dither 绕过钳制 | 开关无变化 / strength=5 生效 | 默认内缩 0.1 / 钳制 1.5 + warning |
+| 组合顺序冲突、15 项全开=单色 | 描边被后续 preset 打掉 | 仍存在顺序敏感（记录为已知限制）；UI 画廊改为分组选择而非盲目全开 |
+
+协议扩展（向后兼容）：`generate` / `edit` 响应新增 `warnings:[String]`；Swift `GenerateResult` 缺失时默认 `[]`。
+golden 矩阵按项目规范重生成（8 配置仅 outline_cell 哈希变化）。
+未完成：neon 仍为 Color+Brightness 近似；chibi 真实人脸路径仅 monkeypatch 验证。
+
+## 5.3 UI：从「默认控件墙」到「克制的高级杂志感」
+
+UI 审计结论：现状不是单纯「不好看」，而是信息架构坏了——默认 1100×728 窗口下侧栏要滚动才能
+看到「生成」，15 个特效 Toggle 是墙，图纸 hero 被塞进灰框且无色号/尺寸/颗数图注。
+
+落地内容（SwiftUI 主推版，`app/Sources/PerlerApp/`）：
+- 编辑杂志风主界面：报头/期号、编号章节 spec sheet、hero 图版 + 图注（FIG.01）、耗材 inspector、
+  编辑式特效画廊 sheet、色卡色样册、亮暗双主题；三栏固定、参数 4pt 密度、生成键常驻。
+- 保留全部原功能：网格实时联动（NSTextFieldBridge）、预览缩放/平移、成品切换、编辑/进度/撤销、
+  PNG/PDF 导出、拖放、快捷键；主操作与快捷键可键盘到达。
+- Tk 版本轮未重做（仍为旧 UI），Swift 版为设计主推。
+
+设计观点（详见 [qa/ui/audit.md](qa/ui/audit.md)）：**做 6/10「克制的高级杂志感」**，editorial 只放在
+报头/图注/空状态/特效画廊/色卡/导出封面等展示面，工作台保持工具效率；不做全套编辑部
+（大留白/衬线小字参数/非对称工作页会伤效率，双端双外观维护成本高）。
+
+## 5.4 测试有效性盲区（新发现）
+
+1. 特效 7 项的断言可被 no-op 实现通过（详情与探针：`qa/gates/report.md`）。
+2. 无任何断言检查「切特效是否自动重绘」、UI 外观/布局/可读性；XCUITest 不在 412/437 门禁内，
+   且 TEST_REPORT 历史记录中的 U5–U7「见下方补记」在全文不存在。
+3. 测试会删除用户数据：run_tests `shutil.rmtree(仓库/track)`、gui_smoke 删根 settings/queue
+   —— 已在 2.4.0 修复为 tempdir 隔离 + `PERLER_*` 路径 env 覆盖（CI 建议注入）。
+4. `stress_protocol` S5 在 `ps` 不可用的沙箱里内存断言恒真（环境限制，已记录）。
+
+## 5.5 风险与后续
+
+- 跨平台：新 UI 使用 macOS 系统字体（Songti/PingFang/Didot/New York）；打包 Windows/跨平台需引入
+  OFL 字体（Noto Serif SC 等）并附许可。
+- 特效画廊暂无逐项缩略图（Phase 2，需新增 effectPreviews 协议）。
+- 视觉验收目前依赖人工看截图；建议补 UI 截图/感知 diff 回归与特效视觉快照（golden 已覆盖 4/15）。
+- 开源参考与 license 清单：`qa/research/report.md`。
+
