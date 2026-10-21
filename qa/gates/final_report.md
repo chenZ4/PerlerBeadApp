@@ -11,6 +11,53 @@
 
 ---
 
+# 2.5.0 二轮改造最终门禁复测（T8/T9/T10/T11，2026-10-21 23:23–23:28）
+
+> 本节是最新门禁终态（由 T11 执行）；下方 T7/2.2.0 段落保留为历史对照。
+> 注意：2.2.0（T7）的证据目录已归档到 qa/gates/logs/final_2.2.0/；qa/gates/logs/final/ 现在保存 2.5.0 证据。
+
+## A. 背景
+
+- T8 预览缩放/平移硬伤修复（P0）、T9 老钱风棕色主题 + 开始页 photo→beads hero 视觉统一、T10 独立验证（缩放/平移事件级复现 + 棕色主题一致性）；ui-audit 随后补 P3 锚点修复（isFlipped=true + 16pt padding 坐标换算），view-verify 复验 swift test 111/111、dragcheck PASS。
+- core/version.py 工作区版本 = 2.5.0（门禁时尚未提交；门禁后 Lead 提交为 26a0b64 / 95fe228）。
+- 本轮为只读门禁复测：未改源码/测试，未 git commit/push。
+
+## B. 最终门禁终态（严格顺序、无并发）
+
+| # | 步骤 | 命令 | 耗时 | 退出码 | 通过 | 失败 | 用户数据副作用 | 日志 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | run_tests | conda run -n pindou python tests/run_tests.py | 69.1s | 0 | **249** | **0** | **0** | qa/gates/logs/final/run_tests.log |
+| 2 | gui_smoke | conda run -n pindou python tests/gui_smoke.py | 20.3s | 0 | **92** | **0** | **0** | qa/gates/logs/final/gui_smoke.log |
+| 3 | stress_protocol | conda run -n pindou python tests/stress_protocol.py | 69.5s | 0 | **12** | **0** | **0** | qa/gates/logs/final/stress_protocol.log |
+| 4 | swift test（PERLER_* env 注入） | cd app && swift test --disable-sandbox | 42.3s | 0 | **111** | **0** | **0** | qa/gates/logs/final/swift_test_isolated.log |
+| 5 | swift build | cd app && swift build --disable-sandbox | 1.0s | 0 | — | — | **0** | qa/gates/logs/final/swift_build.log |
+| — | **合计** | — | **≈202s** | — | **464** | **0** | **0** | qa/gates/logs/final/isolation_diff.json |
+
+- **精确数字：249 + 92 + 12 + 111 = 464**，与 Lead 预期一致（此前 463 的差异来自 P3 锚点修复新增 1 个 ZoomPan 测试）。
+- swift test 的 111 项 = 既有 84 + ZoomPanTests 11（T8，含 P3 锚点 1 项）+ VerifyZoomPanTests 15（T10）+ AssetTests 1（T9）。
+- 用户数据隔离：5 个步骤对 track/、根 history.json/queue_state.json/app_settings.json/my_colors.json、output/、data/ 的 sha256 全部前后一致（side_effects=0）；根 json mtime 保持 2026-10-21 22:11:03 不变。证据 qa/gates/logs/final/isolation_diff.json。
+- 失败 0、flaky 0；本轮**未**再跑 bare swift 残留审计（T7 已确认 bare 只新增测试键/prune output、不删用户 track 键，机制未变）。
+
+## C. 测试数变化（2.2.0 → 2.5.0：437 → 464）
+
+| 套件 | 2.2.0 | 2.5.0 | 变化 | 说明 |
+|---|---|---|---|---|
+| run_tests | 249 | 249 | 0 | — |
+| gui_smoke | 92 | 92 | 0 | — |
+| stress_protocol | 12 | 12 | 0 | — |
+| swift test | 84 | 111 | +27 | 全部为 app/Tests 新增文件：ZoomPanTests 11 + VerifyZoomPanTests 15 + AssetTests 1 |
+| **合计** | **437** | **464** | **+27** | 既有 84 项 Swift 测试文件计数未变；无删除/弱化 |
+
+## D. 状态与遗留
+
+- 门禁运行期间 HEAD=4736fed，工作区含 T8/T9/T10 未提交改动；门禁结束后 Lead 提交为 26a0b64（feat 2.5.0 老钱风/hero/缩放平移）与 95fe228（docs 二轮验证）。app/core/tests 在门禁前后无内容变化（门禁结束后无源码/测试写入；当前仅 README/TEST_REPORT/ARCHITECTURE/version.py 为 Lead 未提交 docs/版本改动）。
+- 沿用 T7 遗留风险：① bare swift test 需 CI 注入 PERLER_* env（否则 prune output，但不删用户 track 键）；② stress S5 在 ps 不可用时内存断言恒真；③ DSH 沙箱下 swift test/build 需 --disable-sandbox；④ UI 外观自动化仍以 T10 独立验证 + qa/ui/after 截图人工验收为主（VerifyZoomPanTests 覆盖缩放/平移几何，不等于视觉审美断言）。
+- 证据：qa/gates/logs/final/（2.5.0 全套）；qa/gates/logs/final_2.2.0/（T7/2.2.0 历史归档）。
+
+---
+
+---
+
 ## 0. 结论摘要
 
 1. **最终门禁全绿：run_tests 249/0、gui_smoke 92/0、stress_protocol 12/0、swift test 84/0、swift build 通过；合计 437/0。**

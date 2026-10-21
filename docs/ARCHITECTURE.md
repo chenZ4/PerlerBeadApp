@@ -1,7 +1,7 @@
 # 拼豆图纸 · 工程说明（中文）
 
 > 面向长期维护的开发说明：项目结构、分层设计、数据流、关键语义、测试与规范。
-> 最后更新：2026-10-21（2.4.0 特效质量重做 + 编辑杂志风 UI + 自动预览）
+> 最后更新：2026-10-21（2.5.0 特效质量重做 + 老钱风编辑杂志 UI + 自动预览 + 缩放/平移修复）
 
 ## 1. 项目结构
 
@@ -36,7 +36,9 @@ PerlerBeadApp/
 │   └── Sources/PerlerApp/
 │       ├── AppViewModel.swift # 交互逻辑（可测试：模拟用户操作+真实引擎；含参数变更自动预览防抖）
 │       ├── ContentView.swift  # 编辑杂志风主界面（报头/三栏/图版图注/特效画廊 sheet）
-│       ├── DesignSystem.swift # 设计 tokens/字体/原子组件（亮暗双主题）
+│       ├── DesignSystem.swift # 老钱风 tokens（暖纸/深咖/干邑黄铜）/字体/原子组件（亮暗双主题）
+│       ├── EditorialAssets.swift # 内置素材加载（SPM Bundle.module / Xcode bundle / 源码树回退）
+│       ├── Resources/         # 内置素材（开始页 hero：photo→beads 过渡图）
 │       ├── Engine.swift       # 引擎协议客户端（stdio 行协议，主线程回调）
 │       ├── Models.swift       # GenerateResult 等协议模型（含 warnings 兼容解码）
 │       └── ColorChartView.swift
@@ -45,7 +47,7 @@ PerlerBeadApp/
 ├── tests/
 │   ├── run_tests.py           # 引擎+模型+服务层自动化（249 项，2026-10-21 基线）
 │   └── gui_smoke.py           # Tk 版 GUI 冒烟（92 项，零弹窗零交互）
-└── app/Tests/PerlerAppTests/  # Swift 测试（84 项，含自动预览 6 项）
+└── app/Tests/PerlerAppTests/  # Swift 测试（111 项：自动预览 6 + 缩放/平移 10 + 独立验证 15 + hero 资源 1 + 其余回归）
 ```
 
 ## 2. 分层设计（Tk 版 OOP 化后的目标架构）
@@ -129,6 +131,18 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
 `uiNotifyParametersChanged()` 双通道调用 `parametersDidChange()` → 置 `needsRegenerate`
 并 500ms 防抖触发 `scheduleAutoPreview()`；忙时排队、手动「生成」优先并取消 pending。
 预览重算走同一 `generate` op（非独立低清通道），100×100 网格约 1s。
+
+### 3.5 预览缩放/平移（2026-10-21 二轮修复）
+
+- **状态**：`AppViewModel.zoom`（25~400%）、`fitToWindow`、`offset`；fit 与手动缩放互斥且可无缝切换。
+- **UI**：`ContentView` 预览右上角常驻 −/滑块/＋/百分比/适应窗口/重置；任意缩放交互自动切出 fit。
+- **事件**：`PreviewInputCatcher`（NSViewRepresentable + `NSEvent.addLocalMonitorForEvents`，命中测试穿透）
+  捕获 `scrollWheel` / `magnify`：鼠标滚轮（及 ⌘/⌥+滚动）以光标为锚点缩放；触控板双指滚动平移；
+  pinch 缩放；仅当事件窗口/光标在预览区时消费，不干扰左右 ScrollView。
+- **数学**：`PreviewViewport` 纯函数（displaySize / fittedZoomPercent / clampZoom / anchoredOffset /
+  clampOffset）——锚点缩放保持光标下像素不动；offset 钳制为「大图至少 15% 可见、小图居中」。
+  单测 `app/Tests/PerlerAppTests/ZoomPanTests.swift`。
+- **快捷键**：⌘+ / ⌘− / ⌘0（重置视图）；双击居中；编辑模式下禁用拖拽（点击换色优先）。
 
 ## 4. 比例模式语义（核心易错点）
 
@@ -215,3 +229,9 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
   重生成（`tests/golden/update_golden.py --matrix`），再改匹配/特效算法需同步重生成。
 - XCUITest 不在 4 套交付门禁内，且需要 macOS 自动化权限；本机 `AXIsProcessTrusted=false`，
   无法自动化驱动真实 app 选图（UI 验证用真机空状态截图 + 同源码离屏 harness）。
+- 缩放/平移的滚轮与双指手感依赖真实设备；自动化只能验证数学与状态渲染，触控板方向/速度手感
+  需人工验收（独立验证清单见 `qa/verify/`）。
+- 开始页 hero 资产由本地示例照片 + 引擎生成，未引入第三方素材；**公开发布/上架前应替换为
+  明确授权的照片**（当前仅适合本地/个人使用）。
+- 老钱风 UI 使用 macOS 系统字体（宋体/New York/Didot/PingFang），不打包字体；跨平台或分发包
+  需引入 OFL 字体（Noto Serif SC 等）并附许可。
