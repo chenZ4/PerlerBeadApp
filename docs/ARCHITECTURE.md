@@ -45,9 +45,9 @@ PerlerBeadApp/
 ├── core_server.py             # 引擎服务化入口（JSON 行协议，Swift 版调用）
 ├── data/                      # 色卡 JSON（4 套）+ 内置模板 JSON（6 个）
 ├── tests/
-│   ├── run_tests.py           # 引擎+模型+服务层自动化（249 项，2026-10-21 基线）
+│   ├── run_tests.py           # 引擎+模型+服务层自动化（279 项，2026-10-22 基线）
 │   └── gui_smoke.py           # Tk 版 GUI 冒烟（92 项，零弹窗零交互）
-└── app/Tests/PerlerAppTests/  # Swift 测试（111 项：自动预览 6 + 缩放/平移 10 + 独立验证 15 + hero 资源 1 + 其余回归）
+└── app/Tests/PerlerAppTests/  # Swift 测试（111 项 = 既有 84 + 缩放/平移 11 + 独立验证 15 + hero 资源 1）
 ```
 
 ## 2. 分层设计（Tk 版 OOP 化后的目标架构）
@@ -154,6 +154,24 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
   否则 `.aspectRatio(.fill)` 会把右列 430pt 压到 400、吃掉 30pt 右内边距（2.5.1 已修）。
 - 素材加载：`EditorialAssets.heroPhotoToBeadsCover`（SPM Bundle.module / Xcode Bundle.main / 源码树回退）。
 
+### 3.7 生成图/成品/PDF 风格统一（2.6.0）
+
+- **tokens 单一来源**：`core/models.py` 的 EDITORIAL_* 常量（paper/paperDeep/paperMat/ink/inkSoft/
+  inkMuted/hairline/hairlineStrong/accent + dark 组）与 App `DesignSystem.swift`、`qa/ui/theme/README.md`
+  同源；`core/processor.py` 只消费这些常量，不允许散落新色值。
+- **图纸**：paper 底、默认网格线 hairline（`DEFAULT_GRID_COLOR #D5C4AC`，显式旧值仍兼容）、
+  行列标号 paperDeep + ink + 每 5 个 accent、图例 4–5 列编辑式（MATERIALS 标题/双线/方形色块/右对齐数量）、
+  页脚 PLATE + Didot/Georgia 大数字 + 元数据行；旧蓝色 (0,120,215) 全量移除。
+- **色号可读性**：珠色上的色号文字按 WCAG 在 ink/paperMat 中取对比度更高者（全 MARD 最坏约 3:1，
+  run_tests 有断言；个别中间调珠可能 2.3–4.5，属已知 P3 观察）。
+- **CJK 混排**：PIL 不做字体回退，含中文的串禁止整串用 mono；`processor._text_runs/_draw_mixed_text`
+  按中文/ASCII 拆段（中文 body、数字 mono、同基线），run_tests 有「CJK 串不得用 mono」守卫。
+- **dark_chart**：espresso #17120D / panel #1E1811 / cream ink / brass accent。
+- **PDF**：A4 图表页 paper + 细框 + 页码（不重复图表内 PLATE 页脚）；BOM 页编辑式材料表；
+  1:1 页纸底 + 裁切角线；页面尺寸/页数/裁切语义与 2.5.x 一致（run_tests 断言）。
+- **golden 语义**：`tests/golden/golden_matrix.json` 只哈希 finished 的纯珠像素区（满覆盖素材无背景），
+  因此「底色/文字/PDF 改版」不改变哈希；若改的是珠色映射/特效算法才需重生成。
+
 ## 4. 比例模式语义（核心易错点）
 
 | 模式 | 引擎参数 | 行为 |
@@ -237,6 +255,11 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
 - 特效画廊目前无逐项实时缩略图（Phase 2，需新增 effectPreviews 协议）；现为编号卡片 + 参数 + 前后对比。
 - 色卡匹配为 CIELAB（D65）感知距离：golden 基准于 2026-09-08 与 2026-10-21（outline_cell 语义变更）
   重生成（`tests/golden/update_golden.py --matrix`），再改匹配/特效算法需同步重生成。
+  golden 只哈希 finished 纯珠像素区：改底色/字体/PDF 版式不会触发 golden 变化（2.6.0 已验证）。
+- 生成图风格统一（2.6.0）后，中间调珠色上个别色号文字对比度可能只有 2.3–4.5:1（中位 10.7–13.25）；
+  属 P3 观察项，必要时可再提高字号/描边。
+- 默认网格线由历史冷灰 #C8C8C8 改为暖发丝线 #D5C4AC（新默认；显式旧值/旧设置仍兼容）。
+- Tk 兜底界面本轮未做老钱风统一（用户明确暂不处理）；Tk 预览中图纸内容已是新 editorial 风格。
 - XCUITest 不在 4 套交付门禁内，且需要 macOS 自动化权限；本机 `AXIsProcessTrusted=false`，
   无法自动化驱动真实 app 选图（UI 验证用真机空状态截图 + 同源码离屏 harness）。
 - 缩放/平移的滚轮与双指手感依赖真实设备；自动化只能验证数学与状态渲染，触控板方向/速度手感

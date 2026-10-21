@@ -659,3 +659,45 @@ swift test 增量为：AutoPreviewTests 6（2.4.0）+ ZoomPanTests 10 + AssetTes
 
 封面改版后 `swift test 111`（旧横向 hero 测试删除后），最终门禁 249 + 92 + 12 + 111 = **464/0**（详见 qa/gates/final_report.md）。
 
+
+---
+
+# 8. 2.6.0 生成图/PDF 风格统一（2026-10-22 用户五轮反馈）
+
+用户反馈：『生成的图片的风格也要统一，所有界面统一』。本轮把引擎输出的图纸 PNG、成品预览、PDF（含 BOM 页）
+从旧「白底 + 蓝色标题/浅蓝标号区」统一到与 2.5.x App 界面同一套老钱风 editorial tokens；Tk 界面按用户明确指示暂不处理。
+
+## 8.1 改动（core/models.py + core/processor.py + core/effects/filters.py）
+
+- tokens 单一来源：paper #F4EDE1 / paperDeep #EBE1D2 / paperMat #FBF6EC / ink #2A2118 / inkSoft #4D3F30 /
+  inkMuted / hairline #D5C4AC / hairlineStrong #B7A488 / accent #8A5A33；暗色 #17120D / #1E1811 / #F0E7D8 / #C99B63。
+- 图纸：paper 底、默认网格线改暖 hairline、行列标号 paperDeep+ink（每 5 个 accent）、图例 4–5 列编辑式
+  （MATERIALS · 耗材清单 + 双发丝线 + 方形色块 + 右对齐数量）、页脚 PLATE 01 + Didot/Georgia 大数字 + 元数据行；
+  旧蓝色 (0,120,215) 全量移除；列宽/字号/对比度为可读性做过 WP 断言。
+- 成品预览：paper 背景（透明格露出纸底）；色号文字按 WCAG 在 ink/paperMat 中取对比度更高者。
+- dark_chart：espresso 底 + 奶油墨 + 黄铜 accent。
+- PDF：A4 图表页 paper + 细框 + 右下页码（不重复图表内 PLATE 页脚）；BOM 页编辑式材料表（MATERIALS 标题、
+  SWATCH/CODE/NAME/QTY/SHARE、右对齐数量/占比、合计）；1:1 页纸底 + 裁切角线；页面尺寸/页数/裁切语义不变。
+- CJK 混排：PIL 无字体回退，新增 `_text_runs/_draw_mixed_text`（中文用 body：PingFang/msyh；数字/ASCII 用 mono），
+  修复「颗」「约」在 Menlo 下渲染为 tofu 的问题；run_tests 新增 2 条「含 CJK 串不得用 mono」守卫。
+- 默认网格线常量 #C8C8C8 → #D5C4AC（新默认；显式旧值/旧设置仍兼容）。
+
+## 8.2 独立验证（T17，全部 PASS）
+
+| 项 | 结果 |
+|---|---|
+| 图纸 PNG（29/60/100 + cell16 + dark） | PASS：三角=paper δ=0、左上角块=espresso δ=0；旧蓝像素 0（改前 2110/3336–6407）；图例 OCR 重叠 0；信息 8/8；色号对比度中位 10.7–13.25 |
+| dark_chart / finished | PASS：暗色 tokens 精确命中；透明格露 paper δ=0 |
+| PDF（A4/BOM/1:1/bw） | PASS：页数 5/5/8 与改前一致、A4 尺寸、paper 底、旧蓝 0、页脚无重复 |
+| tokens 对齐 | PASS：core 17 个 token 对 Swift DesignSystem 亮/暗 delta 全 0（17/17） |
+| 回归 | PASS：run_tests 279/0、gui_smoke 92/0、stress 12/0、swift test 111/0（合计 494）；golden 未变（仅哈希 finished 纯珠区，语义正确） |
+| 可读性/尺寸 | PASS（P3 观察）：中间调珠个别色号对比度 2.3–4.5，中位 10.7–13.25 |
+
+报告：[qa/effects/style/README.md](qa/effects/style/README.md) / [qa/verify/style_unification_report.md](qa/verify/style_unification_report.md)；
+代表性截图：`qa/effects/style/chart_29x29_cell60.png`、`chart_60x60_cell20.png`、`chart_dark_chart_29x29.png`、
+`pdf_a4_page_render.jpg`、`pdf_bom_page1_render.jpg`。
+
+## 8.3 门禁
+
+最终 279 + 92 + 12 + 111 = **494/0**（详见 qa/gates/final_report.md）。golden 未重生成的理由见 8.1/8.2。
+
