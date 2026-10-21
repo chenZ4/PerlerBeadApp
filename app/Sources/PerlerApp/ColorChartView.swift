@@ -19,7 +19,7 @@ struct ColorChartView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Hairline()
+            DoubleRule()
             GeometryReader { geo in
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVStack(alignment: .leading, spacing: 18) {
@@ -176,13 +176,17 @@ struct ColorCardView: View {
                 .frame(height: 84)
                 .overlay(Rectangle().stroke(Tok.ink.opacity(0.12), lineWidth: 0.8))
                 .overlay(alignment: .topLeading) {
+                    // 色号标签固定在色块上，用与主题无关的明暗两色保证可读
+                    let onLightSwatch = brightness(rgb) > 0.55
                     Text(code)
                         .font(TFont.menloBold(9))
-                        .foregroundStyle(brightness(rgb) > 0.55 ? Tok.ink : Color.white)
+                        .foregroundStyle(onLightSwatch
+                                         ? Color(hex: 0x2A2118)
+                                         : Color(hex: 0xFBF6EC))
                         .padding(.horizontal, 5).frame(height: 16)
-                        .background(brightness(rgb) > 0.55
-                                    ? Color.white.opacity(0.65)
-                                    : Color.black.opacity(0.28))
+                        .background(onLightSwatch
+                                    ? Color(hex: 0xFBF6EC).opacity(0.82)
+                                    : Color(hex: 0x17120D).opacity(0.55))
                         .padding(5)
                 }
             HStack(alignment: .firstTextBaseline, spacing: 5) {

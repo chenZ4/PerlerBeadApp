@@ -37,22 +37,23 @@ extension Color {
 
 enum Tok {
     // Color —— 纸白/墨黑/米色 + 单一朱砂（亮/暗成对）
-    static let paper        = Color.dynamic(light: 0xFAF7F1, dark: 0x14120E)
-    static let paperDeep    = Color.dynamic(light: 0xF1EBE1, dark: 0x1C1915)
-    static let paperMat     = Color.dynamic(light: 0xFFFFFF, dark: 0x24201A)
-    static let ink          = Color.dynamic(light: 0x17140F, dark: 0xF4EFE5)
-    static let inkSoft      = Color.dynamic(light: 0x494338, dark: 0xC9C1B2)
-    static let inkMuted     = Color.dynamic(light: 0x6F6657, dark: 0xA79E8E)
-    static let inkFaint     = Color.dynamic(light: 0x8A8172, dark: 0x7D7466)
-    static let hairline     = Color.dynamic(light: 0xD9CFC0, dark: 0x332E27)
-    static let hairlineSoft = Color.dynamic(light: 0xE8E1D5, dark: 0x2A261F)
-    static let hairlineStrong = Color.dynamic(light: 0xBDB2A0, dark: 0x4A4339)
-    static let accent       = Color.dynamic(light: 0xB03D25, dark: 0xE0603F)
-    static let accentBright = Color.dynamic(light: 0xC8452B, dark: 0xF07A56)
-    static let accentSoft   = Color.dynamic(light: 0xF5E3DC, dark: 0x3A2018)
-    static let success      = Color.dynamic(light: 0x3E6B4F, dark: 0x7FB08C)
-    static let warning      = Color.dynamic(light: 0x8F5A16, dark: 0xD8A056)
-    static let danger       = Color.dynamic(light: 0xA33222, dark: 0xE07A66)
+    // 老钱 / 静奢：暖羊皮纸 + 深咖墨 + 黄铜/干邑（T9；红绿全部移除）
+    static let paper        = Color.dynamic(light: 0xF4EDE1, dark: 0x17120D)
+    static let paperDeep    = Color.dynamic(light: 0xEBE1D2, dark: 0x1E1811)
+    static let paperMat     = Color.dynamic(light: 0xFBF6EC, dark: 0x261E15)
+    static let ink          = Color.dynamic(light: 0x2A2118, dark: 0xF0E7D8)
+    static let inkSoft      = Color.dynamic(light: 0x4D3F30, dark: 0xC9B99F)
+    static let inkMuted     = Color.dynamic(light: 0x72614A, dark: 0xA08E74)
+    static let inkFaint     = Color.dynamic(light: 0x8F7F68, dark: 0x7D6E58)
+    static let hairline     = Color.dynamic(light: 0xD5C4AC, dark: 0x3A2F23)
+    static let hairlineSoft = Color.dynamic(light: 0xE6D9C5, dark: 0x2C241A)
+    static let hairlineStrong = Color.dynamic(light: 0xB7A488, dark: 0x52422F)
+    static let accent       = Color.dynamic(light: 0x8A5A33, dark: 0xC99B63)   // 干邑/黄铜
+    static let accentBright = Color.dynamic(light: 0xA9763F, dark: 0xD9AE79)
+    static let accentSoft   = Color.dynamic(light: 0xEFE0CC, dark: 0x33261A)
+    static let success      = Color.dynamic(light: 0x6E6547, dark: 0xA79B72)   // 青铜/橄榄褐
+    static let warning      = Color.dynamic(light: 0x8C6314, dark: 0xC9973F)   // 琥珀
+    static let danger       = Color.dynamic(light: 0x7E3B2C, dark: 0xC07A63)   // 牛血红
 
     // Radius
     static let radiusS: CGFloat = 2
@@ -251,7 +252,7 @@ struct AccentButtonStyle: ButtonStyle {
         configuration.label
             .font(TFont.pingfangMedium(12.5))
             .tracking(0.8)
-            .foregroundStyle(Color.white)
+            .foregroundStyle(Tok.paper)
             .padding(.horizontal, 16)
             .frame(height: height)
             .background(Tok.accent)
@@ -269,9 +270,9 @@ struct GhostButtonStyle: ButtonStyle {
             .foregroundStyle(Tok.inkSoft)
             .padding(.horizontal, 11)
             .frame(height: height)
-            .background(Tok.paper.opacity(configuration.isPressed ? 0.55 : 0.001))
+            .background(Tok.paperMat.opacity(configuration.isPressed ? 0.75 : 0.55))
             .overlay(RoundedRectangle(cornerRadius: Tok.radiusS)
-                .stroke(Tok.hairline, lineWidth: 1))
+                .stroke(Tok.hairlineStrong, lineWidth: 1))
     }
 }
 
@@ -433,5 +434,56 @@ struct IndexBadge: View {
             .frame(height: 15)
             .background(filled ? Tok.ink : Tok.paper)
             .overlay(Rectangle().stroke(filled ? Tok.ink : Tok.hairline, lineWidth: 1))
+    }
+}
+
+
+// MARK: - 老钱风装帧元素（T9）
+
+extension Tok {
+    /// 黄铜渐变（仅用于展示面：开始页大标题 / 期号 / 图注，不用于小字正文）
+    static let brassStart = Color.dynamic(light: 0xB0764A, dark: 0xD9AE79)
+    static let brassEnd   = Color.dynamic(light: 0x7E5228, dark: 0xC99B63)
+    static var brassGradient: LinearGradient {
+        LinearGradient(colors: [brassStart, brassEnd],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+/// 双发丝线（外粗内细），用于报头/开始页装帧
+struct DoubleRule: View {
+    var outerHeight: CGFloat = 1.5
+    var innerHeight: CGFloat = 0.5
+    var gap: CGFloat = 3
+    var body: some View {
+        VStack(spacing: gap) {
+            Rectangle().fill(Tok.hairlineStrong).frame(height: outerHeight)
+            Rectangle().fill(Tok.hairline).frame(height: innerHeight)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// 菱形 fleuron（中世纪花饰的极简版）
+struct Fleuron: View {
+    var size: CGFloat = 6
+    var color: Color = Tok.accent
+    var body: some View {
+        Rectangle()
+            .stroke(color, lineWidth: 1)
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(45))
+            .allowsHitTesting(false)
+    }
+}
+
+/// 黄铜箭头（图录/导出行的指向符）
+struct BrassArrow: View {
+    var size: CGFloat = 10
+    var body: some View {
+        Image(systemName: "arrow.up.right")
+            .font(.system(size: size, weight: .regular))
+            .foregroundStyle(Tok.accent)
+            .allowsHitTesting(false)
     }
 }

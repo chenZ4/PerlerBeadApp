@@ -26,6 +26,7 @@ struct ContentView: View {
         }
         .background(Tok.paper)
         .foregroundStyle(Tok.ink)
+        .background(shortcutHost)
         .sheet(isPresented: $showColorChart) {
             ColorChartView(paletteInternal: vm.paletteInternal,
                            paletteDisplay: vm.paletteDisplay,
@@ -55,7 +56,7 @@ struct ContentView: View {
     private var coverLayout: some View {
         VStack(spacing: 0) {
             masthead
-            Hairline()
+            DoubleRule()
             HStack(spacing: 0) {
                 EmptyStateView(vm: vm,
                                onChooseImage: chooseImage,
@@ -70,71 +71,63 @@ struct ContentView: View {
     }
 
     private var coverRail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(index: "A", title: "示例图版", trailing: "SAMPLES")
-                .padding(.top, 18)
-            VStack(spacing: 0) {
-                ForEach(Array(vm.templates.prefix(3)), id: \.id) { t in
-                    Button { vm.loadTemplate(t.id) } label: {
-                        HStack(spacing: 12) {
-                            TemplateThumb(vm: vm, template: t, size: 46)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(t.name).font(TFont.pingfangMedium(12))
-                                    .foregroundStyle(Tok.ink)
-                                Text("\(t.width) × \(t.height) · \(t.width * t.height) 颗")
-                                    .font(TFont.menlo(9.5)).foregroundStyle(Tok.inkMuted)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionHeader(index: "A", title: "示例图版", trailing: "CATALOGUE")
+                    .padding(.top, 20)
+                VStack(spacing: 0) {
+                    ForEach(Array(vm.templates.prefix(5).enumerated()), id: \.element.id) { idx, t in
+                        Button { vm.loadTemplate(t.id) } label: {
+                            HStack(spacing: 12) {
+                                Text(String(format: "%02ld", idx + 1))
+                                    .font(TFont.didot(15)).foregroundStyle(Tok.accent)
+                                    .frame(width: 22, alignment: .leading)
+                                TemplateThumb(vm: vm, template: t, size: 46)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(t.name).font(TFont.pingfangMedium(12))
+                                        .foregroundStyle(Tok.ink)
+                                    Text("\(t.width) × \(t.height) · \(t.width * t.height) 颗")
+                                        .font(TFont.menlo(9.5)).foregroundStyle(Tok.inkMuted)
+                                }
+                                Spacer(minLength: 6)
+                                BrassArrow()
                             }
-                            Spacer()
-                            Text("打开").font(TFont.pingfang(9.5))
-                                .foregroundStyle(Tok.inkMuted)
+                            .frame(height: 58)
+                            .contentShape(Rectangle())
                         }
-                        .frame(height: 58)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        Hairline(color: Tok.hairlineSoft)
                     }
-                    .buttonStyle(.plain)
-                    Hairline(color: Tok.hairlineSoft)
+                }
+
+                SectionHeader(index: "B", title: "快捷键", trailing: "KEYS")
+                    .padding(.top, 20)
+                VStack(spacing: 0) {
+                    keyRow("打开图片", "⌘ O")
+                    keyRow("生成图纸", "⌘ G")
+                    keyRow("缩放 / 重置", "⌘+ / ⌘− / ⌘0")
+                    keyRow("对比原图", "按住按钮")
+                }
+                .padding(.top, 2)
+
+                SectionHeader(index: "C", title: "输出", trailing: "OUTPUT")
+                    .padding(.top, 20)
+                VStack(spacing: 0) {
+                    keyRow("PNG 图纸", "3670 × 4270 px")
+                    keyRow("PDF", "A4 / 1:1 实物")
+                    keyRow("色卡", "MARD 221 · 4 套")
+                }
+
+                Spacer(minLength: 14)
+                HStack(spacing: 6) {
+                    Fleuron(size: 5)
+                    Text("所有处理在本机完成 · Python 引擎")
+                        .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
                 }
             }
-
-            SectionHeader(index: "B", title: "内置模板", trailing: "\(vm.templates.count) 款")
-                .padding(.top, 18)
-            HStack(spacing: 7) {
-                ForEach(Array(vm.templates.prefix(6)), id: \.id) { t in
-                    Button { vm.loadTemplate(t.id) } label: {
-                        VStack(spacing: 5) {
-                            TemplateThumb(vm: vm, template: t, size: 52, fit: true)
-                            Text(t.name).font(TFont.pingfang(8.5))
-                                .foregroundStyle(Tok.inkMuted).lineLimit(1)
-                        }
-                        .frame(width: 56)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.top, 8)
-
-            Hairline().padding(.vertical, 16)
-
-            SectionHeader(index: "C", title: "快捷键", trailing: "KEYS")
-            VStack(spacing: 0) {
-                keyRow("打开图片", "⌘ O")
-                keyRow("生成图纸", "⌘ G")
-                keyRow("导出 PNG", "⌘ E")
-                keyRow("对比原图", "按住按钮")
-            }
-            .padding(.top, 2)
-
-            Spacer(minLength: 6)
-            HStack(spacing: 6) {
-                Rectangle().fill(Tok.accent).frame(width: 5, height: 5)
-                Text("所有处理在本机完成 · Python 引擎")
-                    .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
-            }
+            .padding(.horizontal, 26)
+            .padding(.bottom, 16)
         }
-        .padding(.horizontal, 26)
-        .padding(.bottom, 14)
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private func keyRow(_ label: String, _ key: String) -> some View {
@@ -157,7 +150,7 @@ struct ContentView: View {
     private var workbenchLayout: some View {
         VStack(spacing: 0) {
             masthead
-            Hairline()
+            DoubleRule()
             HStack(spacing: 0) {
                 sidebar.frame(width: Tok.sidebarW)
                 Hairline(vertical: true)
@@ -181,7 +174,8 @@ struct ContentView: View {
                     MicroLabel("PLATE STUDIO", color: Tok.inkMuted, size: 8.5, tracking: 2.4)
                 }
             }
-            Spacer(minLength: 16)
+            Fleuron(size: 6).padding(.horizontal, 16)
+            Spacer(minLength: 8)
             HStack(spacing: 22) {
                 metaBlock("本期色卡", vm.paletteDisplay)
                 metaBlock("网格规格", "\(vm.gridW) × \(vm.gridH)")
@@ -448,6 +442,7 @@ struct ContentView: View {
         .padding(.horizontal, 26)
     }
 
+    /// 常驻缩放控件：− / 滑块 / ＋ / 百分比 / 适应窗口 / 重置
     private var viewControls: some View {
         ViewThatFits(in: .horizontal) {
             fullViewControls
@@ -456,32 +451,47 @@ struct ContentView: View {
     }
 
     private var fullViewControls: some View {
-        HStack(spacing: 8) {
-            fitButton
-            if !vm.fitToWindow {
-                Slider(value: $vm.zoom, in: 25...400, step: 5)
-                    .tint(Tok.ink).controlSize(.mini).frame(width: 88)
-            }
+        HStack(spacing: 6) {
+            stepButton(system: "minus", action: zoomOut)
+            Slider(value: zoomSliderBinding, in: 20...400, step: 5)
+                .tint(Tok.ink).controlSize(.mini).frame(width: 92)
+            stepButton(system: "plus", action: zoomIn)
             zoomLabel
+            fitButton
+            resetButton
         }
     }
 
     private var compactViewControls: some View {
-        HStack(spacing: 8) {
-            fitButton
+        HStack(spacing: 6) {
+            stepButton(system: "minus", action: zoomOut)
             zoomLabel
+            stepButton(system: "plus", action: zoomIn)
+            fitButton
         }
     }
 
+    private func stepButton(system: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Tok.inkSoft)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
     private var zoomLabel: some View {
-        Text(vm.fitToWindow ? "100%" : "\(Int(vm.zoom))%")
+        Text("\(Int(effectiveZoomPercent))%")
             .font(TFont.menlo(9.5)).foregroundStyle(Tok.inkMuted)
-            .frame(width: 34, alignment: .trailing)
+            .frame(width: 38, alignment: .trailing)
             .fixedSize()
     }
 
     private var fitButton: some View {
-        Button { vm.fitToWindow.toggle() } label: {
+        Button { fitPreviewToWindow() } label: {
             Text("适应窗口")
                 .font(TFont.pingfang(10))
                 .foregroundStyle(vm.fitToWindow ? Tok.ink : Tok.inkMuted)
@@ -493,9 +503,34 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
+        .help("适应窗口（⌘0 重置视图）")
+    }
+
+    private var resetButton: some View {
+        Button { resetViewport() } label: {
+            Image(systemName: "arrow.counterclockwise")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Tok.inkMuted)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("重置视图（⌘0）")
     }
 
     private var plate: some View {
+        Group {
+            if vm.editMode {
+                plateBase.gesture(editGesture)
+            } else {
+                plateBase.gesture(dragGesture)
+            }
+        }
+    }
+
+    /// 图版面本身（手势只挂一次：编辑模式=点按换色；普通模式=拖拽平移）
+    private var plateBase: some View {
         ZStack {
             Rectangle().fill(Tok.paperDeep)
             Rectangle().stroke(Tok.hairline, lineWidth: 1)
@@ -510,11 +545,17 @@ struct ContentView: View {
                 compareOverlay(src)
             }
             CropMarks(color: Tok.hairlineStrong, len: 12).padding(9)
+
+            // 真实滚轮 / 触控板事件（NSViewRepresentable 捕获 scrollWheel / magnify）
+            PreviewInputCatcher(onZoom: handleWheelZoom, onPan: handleTwoFingerPan,
+                                inset: 16)
         }
         .clipped()
-        .gesture(dragGesture, including: vm.editMode ? .none : .all)
-        .gesture(editGesture, including: vm.editMode ? .all : .none)
-        .onTapGesture(count: 2) { vm.resetPreviewOffset() }
+        .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { NSCursor.openHand.set() } else { NSCursor.arrow.set() }
+        }
+        .onTapGesture(count: 2) { vm.resetPreviewOffset(); clampOffsetIfNeeded() }
         .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
             handleDrop(providers)
         }
@@ -599,7 +640,7 @@ struct ContentView: View {
                                      })
                 .disabled(vm.chartImage == nil)
                 .opacity(vm.chartImage == nil ? 0.4 : 1)
-                Text("双击居中 · 滚轮缩放")
+                Text("滚轮 / 双指缩放 · 双击居中")
                     .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
             }
         }
@@ -628,7 +669,7 @@ struct ContentView: View {
                 }
             }
             Spacer()
-            Text(vm.editMode ? "点击格子换色 · 双击居中" : "拖拽平移 · 滚轮缩放")
+            Text(vm.editMode ? "点击格子换色 · 双击居中" : "拖拽平移 · 滚轮 / 双指缩放 · ⌘+ / ⌘− / ⌘0")
                 .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
         }
         .frame(height: 28)
@@ -759,7 +800,7 @@ struct ContentView: View {
                     Text(meta).font(TFont.pingfang(9.5)).foregroundStyle(Tok.inkMuted)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text("↗").font(TFont.pingfang(11)).foregroundStyle(Tok.inkMuted)
+                    BrassArrow(size: 9)
                 }
                 .frame(height: 30)
                 .contentShape(Rectangle())
@@ -806,7 +847,9 @@ struct ContentView: View {
                     .font(TFont.pingfang(9.5)).tracking(0.5)
                     .foregroundStyle(Tok.inkMuted)
                 Spacer()
-                Text(vm.fitToWindow ? "适应窗口 · 100%" : "缩放 \(Int(vm.zoom))%")
+                Text(vm.fitToWindow
+                     ? "适应窗口 · \(Int(effectiveZoomPercent))%"
+                     : "缩放 \(Int(vm.zoom))%")
                     .font(TFont.menlo(9.5)).foregroundStyle(Tok.inkMuted)
             }
             .padding(.horizontal, 26)
@@ -833,8 +876,14 @@ struct ContentView: View {
                 .frame(width: size.width, height: size.height)
                 .position(x: geo.size.width / 2 + vm.offset.width,
                           y: geo.size.height / 2 + vm.offset.height)
-                .onAppear { vm.previewGeo = geo.size }
-                .onChange(of: geo.size) { _, newValue in vm.previewGeo = newValue }
+                .onAppear {
+                    vm.previewGeo = geo.size
+                    clampOffsetIfNeeded()
+                }
+                .onChange(of: geo.size) { _, newValue in
+                    vm.previewGeo = newValue
+                    clampOffsetIfNeeded()
+                }
         }
     }
 
@@ -849,8 +898,16 @@ struct ContentView: View {
 
     private var dragGesture: some Gesture {
         DragGesture()
-            .onChanged { value in vm.dragChanged(value.translation) }
-            .onEnded { _ in vm.dragEnded() }
+            .onChanged { value in
+                guard !vm.editMode else { return }
+                enterManualZoomIfNeeded()
+                vm.dragChanged(value.translation)
+                clampOffsetIfNeeded()
+            }
+            .onEnded { _ in
+                vm.dragEnded()
+                clampOffsetIfNeeded()
+            }
     }
 
     private var editGesture: some Gesture {
@@ -904,6 +961,117 @@ struct ContentView: View {
             : "perler_\(result.gridW)x\(result.gridH).pdf"
         guard let dest = savePanel(defaultName: name, types: ["pdf"]) else { return }
         vm.exportPDF(to: dest, mode: mode)
+    }
+
+    // MARK: - 缩放 / 平移（T8 修复）
+
+    private var currentPreviewImage: NSImage? {
+        vm.effectiveShowFinished ? vm.finishedImage : vm.chartImage
+    }
+
+    /// 当前实际显示百分比：fit 模式按视口/图片真实比例计算，而不是写死 100%
+    private var effectiveZoomPercent: Double {
+        guard let img = currentPreviewImage,
+              vm.previewGeo.width > 4, vm.previewGeo.height > 4 else {
+            return vm.fitToWindow ? 100 : vm.zoom
+        }
+        return vm.fitToWindow
+            ? PreviewViewport.fittedZoomPercent(imageSize: img.size, viewport: vm.previewGeo)
+            : vm.zoom
+    }
+
+    private var zoomSliderBinding: Binding<Double> {
+        Binding(
+            get: { effectiveZoomPercent },
+            set: { applyZoom($0, anchor: nil) }
+        )
+    }
+
+    private var shortcutHost: some View {
+        HStack(spacing: 0) {
+            Button("") { zoomIn() }.keyboardShortcut("=", modifiers: .command)
+            Button("") { zoomOut() }.keyboardShortcut("-", modifiers: .command)
+            Button("") { resetViewport() }.keyboardShortcut("0", modifiers: .command)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0.001)
+        .accessibilityHidden(true)
+    }
+
+    private func zoomIn() { zoomStep(1) }
+    private func zoomOut() { zoomStep(-1) }
+
+    private func zoomStep(_ direction: Int) {
+        let base = effectiveZoomPercent
+        applyZoom(base + (direction > 0 ? 25 : -25), anchor: nil)
+    }
+
+    /// 统一缩放入口：任意缩放交互都会自动切出「适应窗口」，并以 anchor（视口内坐标）为锚点
+    private func applyZoom(_ target: Double, anchor: CGPoint?) {
+        guard let img = currentPreviewImage else { return }
+        let viewport = vm.previewGeo
+        guard viewport.width > 4, viewport.height > 4 else { return }
+        let imageSize = img.size
+        let oldSize = PreviewViewport.displaySize(imageSize: imageSize, viewport: viewport,
+                                                  zoom: vm.zoom, fitToWindow: vm.fitToWindow)
+        let newZoom = PreviewViewport.clampZoom(target)
+        let newSize = PreviewViewport.displaySize(imageSize: imageSize, viewport: viewport,
+                                                  zoom: newZoom, fitToWindow: false)
+        let anchorPoint = anchor ?? CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+        var newOffset = PreviewViewport.anchoredOffset(
+            currentOffset: vm.offset, oldSize: oldSize, newSize: newSize,
+            anchor: anchorPoint, viewport: viewport)
+        newOffset = PreviewViewport.clampOffset(newOffset, displaySize: newSize,
+                                                viewport: viewport)
+        vm.fitToWindow = false
+        vm.zoom = newZoom
+        vm.offset = newOffset
+    }
+
+    private func handleWheelZoom(factor: CGFloat, anchor: CGPoint) {
+        guard currentPreviewImage != nil else { return }
+        applyZoom(effectiveZoomPercent * Double(factor), anchor: anchor)
+    }
+
+    private func handleTwoFingerPan(_ delta: CGSize) {
+        guard let img = currentPreviewImage else { return }
+        let viewport = vm.previewGeo
+        guard viewport.width > 4, viewport.height > 4 else { return }
+        enterManualZoomIfNeeded()
+        let size = PreviewViewport.displaySize(imageSize: img.size, viewport: viewport,
+                                               zoom: vm.zoom, fitToWindow: false)
+        let proposed = CGSize(width: vm.offset.width + delta.width,
+                              height: vm.offset.height + delta.height)
+        vm.offset = PreviewViewport.clampOffset(proposed, displaySize: size, viewport: viewport)
+    }
+
+    /// fit → 手动缩放（尺寸不变），这样之后的平移/继续缩放不会跳变
+    private func enterManualZoomIfNeeded() {
+        guard vm.fitToWindow else { return }
+        guard let img = currentPreviewImage,
+              vm.previewGeo.width > 4, vm.previewGeo.height > 4 else { return }
+        vm.zoom = PreviewViewport.fittedZoomPercent(imageSize: img.size, viewport: vm.previewGeo)
+        vm.fitToWindow = false
+    }
+
+    private func clampOffsetIfNeeded() {
+        guard let img = currentPreviewImage else { return }
+        let viewport = vm.previewGeo
+        guard viewport.width > 4, viewport.height > 4 else { return }
+        let size = vm.previewSize(img: img)
+        let clamped = PreviewViewport.clampOffset(vm.offset, displaySize: size, viewport: viewport)
+        if clamped != vm.offset { vm.offset = clamped }
+    }
+
+    private func fitPreviewToWindow() {
+        vm.fitToWindow = true
+        vm.zoom = 100
+        vm.offset = .zero
+        vm.resetPreviewOffset()
+    }
+
+    private func resetViewport() {
+        fitPreviewToWindow()
     }
 
     // MARK: - 计算属性
@@ -1023,71 +1191,123 @@ struct EmptyStateView: View {
     var onDrop: ([NSItemProvider]) -> Bool
     @State private var targeted = false
 
+    private let heroAspect: CGFloat = 2400.0 / 1333.0
+    private let heroWidth: CGFloat = 520
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            MicroLabel("BEGIN A NEW PLATE  ·  开始一张新图纸")
-                .padding(.top, 30)
+            HStack(alignment: .center, spacing: 10) {
+                MicroLabel("PLATE 00  ·  FROM PHOTOGRAPH TO BEAD")
+                Fleuron(size: 5)
+                MicroLabel("BEGIN A NEW PLATE", color: Tok.inkMuted, size: 8.5)
+            }
+            .padding(.top, 16)
+
             VStack(alignment: .leading, spacing: 0) {
-                Text("从一张照片，").font(TFont.songtiBold(48)).foregroundStyle(Tok.ink)
+                Text("从一张照片，").font(TFont.songtiBold(44)).foregroundStyle(Tok.ink)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("到").font(TFont.songtiLight(48)).foregroundStyle(Tok.ink)
-                    Text("3,600").font(TFont.didot(48)).foregroundStyle(Tok.accent)
-                    Text("颗豆。").font(TFont.songtiBold(48)).foregroundStyle(Tok.ink)
+                    Text("到").font(TFont.songtiLight(44)).foregroundStyle(Tok.ink)
+                    Text("3,600 颗豆。").font(TFont.songtiBold(44))
+                        .foregroundStyle(Tok.brassGradient)
                 }
             }
-            .padding(.top, 8)
+            .padding(.top, 5)
+
             Text("把任意图片排成一张可打印的拼豆图纸 —— 自动映射 MARD 221 色卡，生成行列标号、色号图例与耗材清单。")
-                .font(TFont.pingfang(12.5)).foregroundStyle(Tok.inkSoft)
-                .lineSpacing(6)
+                .font(TFont.pingfang(12)).foregroundStyle(Tok.inkSoft)
+                .lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(width: 640, alignment: .leading)
+                .frame(width: 620, alignment: .leading)
+                .padding(.top, 7)
+
+            heroPlate
                 .padding(.top, 12)
 
-            dropZone.padding(.top, 20)
+            captionRow
+                .padding(.top, 8)
+
+            DoubleRule().padding(.top, 12)
+            dropStrip.padding(.top, 11)
             Spacer(minLength: 0)
         }
-        .padding(.leading, 56)
-        .padding(.trailing, 32)
-        .padding(.bottom, 14)
-    }
-
-    private var dropZone: some View {
-        ZStack {
-            Rectangle().fill(Tok.paperMat)
-            Rectangle().stroke(targeted ? Tok.accent : Tok.hairlineStrong,
-                               lineWidth: targeted ? 2 : 1)
-            CropMarks(color: Tok.hairlineStrong, len: 12).padding(9)
-            VStack(spacing: 0) {
-                Rectangle().fill(Tok.accent).frame(width: 9, height: 9)
-                Text(targeted ? "松开以开始排版" : "拖入图片，开始排版")
-                    .font(TFont.pingfangMedium(16)).tracking(1)
-                    .foregroundStyle(Tok.ink)
-                    .padding(.top, 14)
-                Text("或 ⌘O 选择文件  ·  PNG / JPG / WEBP / GIF")
-                    .font(TFont.menlo(10)).foregroundStyle(Tok.inkMuted)
-                    .padding(.top, 7)
-                Button("选择图片 …") { onChooseImage() }
-                    .buttonStyle(InkButtonStyle(height: 34))
-                    .frame(width: 180)
-                    .padding(.top, 18)
-            }
-            VStack {
-                Spacer()
-                HStack {
-                    Text("建议 ≥ 512 px 的正面照片；像素风、插画也可以")
-                        .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
-                    Spacer()
-                    Text("拖拽 · 本机处理 · 不上传云端")
-                        .font(TFont.menlo(9)).foregroundStyle(Tok.inkMuted)
-                }
-                .padding(.horizontal, 22)
-                .padding(.bottom, 14)
-            }
-        }
-        .frame(height: 270)
+        .padding(.leading, 52)
+        .padding(.trailing, 30)
+        .padding(.bottom, 12)
         .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
             onDrop(providers)
         }
+    }
+
+    /// 开始页 hero：清晰照片 → 逐级像素化 → 拼豆图纸（素材由 Lead 提供）
+    private var heroPlate: some View {
+        ZStack {
+            Rectangle().fill(Tok.paperMat)
+            if let hero = EditorialAssets.heroPhotoToBeads {
+                Image(nsImage: hero)
+                    .resizable()
+                    .aspectRatio(heroAspect, contentMode: .fit)
+                    .frame(width: heroWidth)
+                    .padding(10)
+            } else {
+                Rectangle().fill(Tok.paperDeep)
+                    .frame(width: heroWidth, height: heroWidth / heroAspect)
+                    .overlay(
+                        VStack(spacing: 6) {
+                            Fleuron(size: 7)
+                            Text("PLATE 00").font(TFont.didot(13))
+                                .foregroundStyle(Tok.inkMuted)
+                        }
+                    )
+                    .padding(10)
+            }
+            // 双框线：外铜内浅
+            Rectangle().stroke(Tok.hairlineStrong, lineWidth: 1.5)
+            Rectangle().stroke(Tok.hairline, lineWidth: 0.5).padding(5)
+            CropMarks(color: Tok.hairlineStrong, len: 12).padding(11)
+        }
+        .frame(width: heroWidth + 22, height: heroWidth / heroAspect + 22)
+    }
+
+    private var captionRow: some View {
+        HStack(alignment: .top, spacing: 24) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("PLATE 00").font(TFont.didot(12)).foregroundStyle(Tok.accent)
+                Text("从一张照片，到 3,600 颗豆")
+                    .font(TFont.pingfang(10)).foregroundStyle(Tok.inkSoft)
+            }
+            Spacer()
+            photoBeadsColumn("PHOTOGRAPH", "清晰原片 · 保留明暗层次")
+            photoBeadsColumn("BEADS", "逐级像素化 · MARD 221 映射")
+        }
+        .frame(width: heroWidth + 22)
+    }
+
+    private func photoBeadsColumn(_ title: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            MicroLabel(title, color: Tok.accent, size: 8.5, tracking: 1.8)
+            Text(text).font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
+        }
+    }
+
+    private var dropStrip: some View {
+        HStack(spacing: 14) {
+            Button("选择图片 …") { onChooseImage() }
+                .buttonStyle(InkButtonStyle(height: 38))
+                .frame(width: 190)
+            Text("或拖入图片  ·  ⌘O")
+                .font(TFont.pingfang(10.5)).foregroundStyle(Tok.inkSoft)
+            Spacer()
+            HStack(spacing: 5) {
+                Fleuron(size: 4)
+                Text("本机处理 · 不上传云端")
+                    .font(TFont.pingfang(9)).foregroundStyle(Tok.inkMuted)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Rectangle().fill(Tok.paperMat.opacity(targeted ? 0.9 : 0.5)))
+        .overlay(Rectangle().stroke(targeted ? Tok.accent : Tok.hairline,
+                                    lineWidth: targeted ? 1.5 : 1))
     }
 }
 
@@ -1106,7 +1326,7 @@ struct EffectsGalleryView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Hairline()
+            DoubleRule()
             HStack(spacing: 0) {
                 gallery
                 Hairline(vertical: true)
@@ -1536,7 +1756,9 @@ struct TemplateThumb: View {
                     .resizable()
                     .interpolation(.none)
                     .aspectRatio(contentMode: fit ? .fit : .fill)
+                    .saturation(0.82)
                     .padding(fit ? 6 : 0)
+                Rectangle().fill(Tok.paper.opacity(0.05))
             }
         }
         .frame(width: size, height: size)
@@ -1672,5 +1894,152 @@ extension AppViewModel {
 
 func effectName(_ id: String) -> String {
     effectCatalog.first(where: { $0.id == id })?.name ?? id
+}
+
+
+
+// MARK: - 预览视口数学（纯函数，供缩放/平移/钳制与单元测试复用）
+
+enum PreviewViewport {
+    static let minZoom: Double = 25
+    static let maxZoom: Double = 400
+    static let minVisibleFraction: CGFloat = 0.15
+
+    static func clampZoom(_ zoom: Double) -> Double {
+        min(maxZoom, max(minZoom, zoom))
+    }
+
+    static func displaySize(imageSize: CGSize, viewport: CGSize,
+                            zoom: Double, fitToWindow: Bool) -> CGSize {
+        guard imageSize.width > 0, imageSize.height > 0,
+              viewport.width > 0, viewport.height > 0 else { return .zero }
+        let scale: CGFloat = fitToWindow
+            ? min(viewport.width / imageSize.width, viewport.height / imageSize.height)
+            : CGFloat(zoom) / 100.0
+        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+    }
+
+    static func fittedZoomPercent(imageSize: CGSize, viewport: CGSize) -> Double {
+        guard imageSize.width > 0, imageSize.height > 0,
+              viewport.width > 0, viewport.height > 0 else { return 100 }
+        let scale = min(viewport.width / imageSize.width, viewport.height / imageSize.height)
+        // fit 模式下展示真实比例（可能 < 25%），不套用手动缩放的下限
+        return max(1, Double(scale * 100))
+    }
+
+    /// offset 钳制：大图至少保留 minVisibleFraction 可见；小图（≤ 视口）保持居中
+    static func clampOffset(_ offset: CGSize, displaySize: CGSize, viewport: CGSize,
+                            minVisibleFraction: CGFloat = PreviewViewport.minVisibleFraction) -> CGSize {
+        guard viewport.width > 0, viewport.height > 0 else { return .zero }
+        func axis(_ value: CGFloat, image: CGFloat, viewport v: CGFloat) -> CGFloat {
+            guard image > 0 else { return 0 }
+            if image <= v + 0.5 { return 0 }
+            let visible = min(1, max(0, minVisibleFraction)) * image
+            let lower = visible - image - (v - image) / 2
+            let upper = v - visible - (v - image) / 2
+            return min(max(value, lower), upper)
+        }
+        return CGSize(width: axis(offset.width, image: displaySize.width, viewport: viewport.width),
+                      height: axis(offset.height, image: displaySize.height, viewport: viewport.height))
+    }
+
+    /// 图版坐标（左上原点，含 16pt 内边距）→ 视口坐标（左上原点）
+    static func viewportPoint(fromPlatePoint p: CGPoint, inset: CGFloat) -> CGPoint {
+        CGPoint(x: p.x - inset, y: p.y - inset)
+    }
+
+    /// 锚点缩放：保持 anchor（视口坐标）下的图像点不动
+    static func anchoredOffset(currentOffset: CGSize, oldSize: CGSize, newSize: CGSize,
+                               anchor: CGPoint, viewport: CGSize) -> CGSize {
+        guard oldSize.width > 1, oldSize.height > 1,
+              viewport.width > 1, viewport.height > 1 else { return currentOffset }
+        let center = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+        let f = newSize.width / oldSize.width
+        let dx = (anchor.x - center.x) - ((anchor.x - center.x) - currentOffset.width) * f
+        let dy = (anchor.y - center.y) - ((anchor.y - center.y) - currentOffset.height) * f
+        return CGSize(width: dx, height: dy)
+    }
+}
+
+// MARK: - 真实滚轮 / 触控板事件（scrollWheel / magnify / 双指滚动平移）
+
+struct PreviewInputCatcher: NSViewRepresentable {
+    var onZoom: (CGFloat, CGPoint) -> Void   // factor, 视口内坐标（左上原点）
+    var onPan: (CGSize) -> Void
+    var inset: CGFloat = 16
+
+    func makeNSView(context: Context) -> NSView {
+        let view = EventCatcherView()
+        view.onZoom = onZoom
+        view.onPan = onPan
+        view.inset = inset
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let view = nsView as? EventCatcherView else { return }
+        view.onZoom = onZoom
+        view.onPan = onPan
+        view.inset = inset
+    }
+
+    final class EventCatcherView: NSView {
+        var onZoom: ((CGFloat, CGPoint) -> Void)?
+        var onPan: ((CGSize) -> Void)?
+        var inset: CGFloat = 16
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        /// 使用左上原点，与 SwiftUI 预览视口坐标系一致（修 P3 R1：锚点上下镜像）
+        override var isFlipped: Bool { true }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeMonitor()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                let point = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(point) else { return event }
+                // 图版（含 16pt padding）→ 预览视口坐标（左上原点）
+                let viewportPoint = PreviewViewport.viewportPoint(fromPlatePoint: point,
+                                                                  inset: self.inset)
+                switch event.type {
+                case .magnify:
+                    self.onZoom?(1 + event.magnification, viewportPoint)
+                    return nil
+                case .scrollWheel:
+                    let precise = event.hasPreciseScrollingDeltas
+                    let wantsZoom = event.modifierFlags.contains(.command)
+                        || event.modifierFlags.contains(.option)
+                        || !precise
+                    if wantsZoom {
+                        let delta = event.scrollingDeltaY
+                        guard abs(delta) > 0.01 else { return event }
+                        let factor = 1 + delta * (precise ? 0.01 : 0.06)
+                        self.onZoom?(factor, viewportPoint)
+                    } else {
+                        let dx = event.scrollingDeltaX
+                        let dy = event.scrollingDeltaY
+                        guard abs(dx) + abs(dy) > 0.1 else { return event }
+                        self.onPan?(CGSize(width: dx, height: dy))
+                    }
+                    return nil
+                default:
+                    return event
+                }
+            }
+        }
+
+        private func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+
+        deinit { removeMonitor() }
+    }
 }
 

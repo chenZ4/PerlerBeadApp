@@ -8,6 +8,7 @@ let package = Package(
         .executableTarget(
             name: "PerlerApp",
             path: "Sources/PerlerApp",
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
