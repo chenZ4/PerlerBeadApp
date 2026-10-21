@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PIL import Image
 
 from core.colors import get_palette, PALETTE_OPTIONS
+from core.models import DEFAULT_GRID_RGB
 from core.history_manager import HistoryManager, HISTORY_FILE
 from core.processor import ImageProcessor
 
@@ -574,7 +575,7 @@ def test_hex_to_rgb():
             print(f"    非法输入未回退: {value} -> {parse(value)}")
     report("hex_to_rgb 合法 7 例 + 非法 13 例全部正确", ok)
 
-    report("hex_to_rgb_safe 非法回退灰色", hex_to_rgb_safe("#ZZZZZZ") == (200, 200, 200))
+    report("hex_to_rgb_safe 非法回退暖发丝线", hex_to_rgb_safe("#ZZZZZZ") == DEFAULT_GRID_RGB)
 
 
 def test_core_server():
@@ -1145,6 +1146,233 @@ def test_effect_quality_fixes():
            f"changed={diff.mean():.3f}")
     base_crop.chart.close()
     r_crop.chart.close()
+
+
+def test_editorial_theme():
+    """T15 Editorial 输出风格：纸底/墨/黄铜、行列标号、4~5 列图例、PLATE 页脚、
+    finished 纸底、dark espresso、PDF/BOM 纸底、旧蓝色移除、字号对比度、信息完整。"""
+    print("== 测试12: Editorial 输出风格（T15） ==")
+    from core.models import (PAPER, PAPER_DEEP, PAPER_MAT, INK, INK_MUTED,
+                             HAIRLINE, HAIRLINE_STRONG, ACCENT, DARK_BG,
+                             DARK_ACCENT, DARK_INK)
+    from core.processor import (LABEL_MARGIN, LEGEND_TOP_GAP, LEGEND_TITLE_H,
+                                LEGEND_ROW_H, LEGEND_BOTTOM_GAP, FOOTER_HEIGHT,
+                                SIDE_MARGIN)
+
+    proc = ImageProcessor()
+
+    def counts(img):
+        arr = np.asarray(img.convert("RGB")).reshape(-1, 3)
+        uniq, cnt = np.unique(arr, axis=0, return_counts=True)
+        return {tuple(int(v) for v in u): int(c) for u, c in zip(uniq, cnt)}
+
+    def rel_lum(rgb):
+        def f(c):
+            c = c / 255.0
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2])
+
+    def contrast(a, b):
+        la, lb = sorted((rel_lum(a), rel_lum(b)), reverse=True)
+        return (la + 0.05) / (lb + 0.05)
+
+    # 彩色块素材（避免依赖外部资源）
+    blocks = os.path.join(TEST_DIR, "editorial_blocks.png")
+    img = Image.new("RGB", (160, 160), (248, 245, 238))
+    bx = img.load()
+    for y in range(20, 140):
+        for x in range(20, 140):
+            q = min(1, (x - 20) // 60) + 2 * min(1, (y - 20) // 60)
+            bx[x, y] = [(240, 120, 40), (80, 190, 180),
+                        (230, 110, 120), (60, 60, 70)][q]
+    img.save(blocks)
+
+    r = proc.process_image(blocks, 29, 29, cell_size=40, show_finished=True,
+                           save=False)
+    chart = r.chart.convert("RGB")
+    w, h = chart.size
+    cc = counts(chart)
+
+    # 1) 画布背景 = paper；旧蓝色强调完全移除
+    report("图纸画布背景 = paper #F4EDE1",
+           chart.getpixel((w - 3, 3)) == PAPER, str(chart.getpixel((w - 3, 3))))
+    report("无旧蓝色 (0,120,215)/(120,190,255) 强调色",
+           (0, 120, 215) not in cc and (120, 190, 255) not in cc,
+           str([c for c in cc if c[2] > 180 and c[2] > c[0] + 30][:3]))
+
+    # 2) 行列标号：paperDeep 底 + hairline 边 + ink 数字 + 每 5 个 accent
+    label_strip = chart.crop((0, 0, w, LABEL_MARGIN))
+    lc = counts(label_strip)
+    report("行列标号区 = paperDeep 底", lc.get(PAPER_DEEP, 0) > 300,
+           f"paperDeep={lc.get(PAPER_DEEP, 0)}")
+    report("行列标号区含 hairline 边", lc.get(HAIRLINE, 0) + lc.get(HAIRLINE_STRONG, 0) > 200,
+           f"hairline={lc.get(HAIRLINE, 0)}")
+    report("行列标号每 5 个 accent（accent 数字像素存在）",
+           lc.get(ACCENT, 0) > 20, f"accent={lc.get(ACCENT, 0)}")
+
+    # 3) 图例/页脚：编辑式版面结构（4~5 列 + 双线 + accent PLATE）
+    n_colors = len(r.color_stats)
+    cols, rows = proc._legend_columns(r.color_stats)
+    report("图例列数在 4~5 列（当前 %d 色 → %d 列）" % (n_colors, cols),
+           1 <= cols <= 5 and cols == min(5, n_colors), f"cols={cols}")
+    expect_h = (LABEL_MARGIN * 2 + r.grid_h * r.cell_size + LEGEND_TOP_GAP
+                + LEGEND_TITLE_H + rows * LEGEND_ROW_H + LEGEND_BOTTOM_GAP
+                + FOOTER_HEIGHT)
+    report("图例/页脚高度自适应公式生效", h == expect_h, f"h={h} expect={expect_h}")
+    footer = chart.crop((0, h - FOOTER_HEIGHT, w, h))
+    fc = counts(footer)
+    report("页脚含 PLATE accent 标题", fc.get(ACCENT, 0) > 30,
+           f"accent={fc.get(ACCENT, 0)}")
+    report("页脚含 ink 大数字/元数据文字",
+           fc.get(INK, 0) > 200 and fc.get(INK_MUTED, 0) > 100,
+           f"ink={fc.get(INK, 0)} muted={fc.get(INK_MUTED, 0)}")
+    report("图例/页脚含黄铜双线（hairlineStrong）",
+           cc.get(HAIRLINE_STRONG, 0) > 200, f"strong={cc.get(HAIRLINE_STRONG, 0)}")
+    # 元数据内容（信息完整：网格/总颗数/色数/实物尺寸）
+    wcm, hcm = proc._physical_size(60, 60)
+    report("页脚信息完整（GRID/BEADS/COLORS/尺寸）",
+           proc._thousands(r.total_beads) == f"{r.total_beads:,}"
+           and wcm == "30" and hcm == "30"
+           and proc._palette_display("mard_221") == "MARD 221 色",
+           f"beads={proc._thousands(r.total_beads)} size={wcm}x{hcm}")
+
+    # 4) 观感对比度：ink/paper 与 paperMat/黑珠 ≥ 4.5（WCAG AA）
+    report("ink on paper 对比度 ≥ 4.5", contrast(INK, PAPER) >= 4.5,
+           f"{contrast(INK, PAPER):.2f}")
+    report("paperMat on 深色珠 对比度 ≥ 4.5",
+           contrast(PAPER_MAT, (0, 0, 0)) >= 4.5,
+           f"{contrast(PAPER_MAT, (0, 0, 0)):.2f}")
+    pal = get_palette("mard_221")
+    worst = min(contrast(proc._cell_text_color(rgb), rgb) for rgb in pal.colors)
+    report("全色卡任意珠色上色号对比度 ≥ 3:1", worst >= 3.0,
+           f"worst={worst:.2f}")
+    from PIL import ImageDraw as _ImageDraw
+    _td = _ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    _f_code = proc._get_font(13, role="mono")
+    _f_cnt = proc._get_font(11, role="mono")
+    _f_name = proc._get_font(12, role="body")
+    _ok_fit = True
+    _fit_detail = []
+    for _tw in (1000, 1810):
+        _item_w = (_tw - 2 * SIDE_MARGIN) // 5
+        _w_code = _td.textlength("H10", font=_f_code)
+        _w_cnt = _td.textlength("1,096 颗", font=_f_cnt)
+        _w_name = _td.textlength("深褐紫", font=_f_name)
+        _fit = ((_item_w - 34) >= _w_code + _w_cnt + 8
+                and (_item_w - 34) >= _w_name)
+        _ok_fit = _ok_fit and _fit
+        _fit_detail.append(f"{_tw}:col{_item_w} text{int(_w_code + _w_cnt)} name{int(_w_name)}")
+    report("图例 5 列不重叠（色号+数量/名称列宽校验）", _ok_fit,
+           "; ".join(_fit_detail))
+
+    # 5) 图纸色号文字：浅色珠 ink / 深色珠 paperMat
+    def grid_area(res):
+        c = res.chart.convert("RGB")
+        cw, ch = c.size
+        dw = res.grid_w * res.cell_size
+        x0 = LABEL_MARGIN + (cw - 2 * LABEL_MARGIN - dw) // 2
+        y0 = LABEL_MARGIN
+        return c.crop((x0, y0, x0 + dw, y0 + res.grid_h * res.cell_size))
+
+    black_src = make_source(60, 60, (0, 0, 0))
+    rb = proc.process_image(black_src, 10, 10, cell_size=40, save=False)
+    report("深色珠上色号用 paperMat（奶油色）",
+           counts(grid_area(rb)).get(PAPER_MAT, 0) > 10,
+           f"paperMat={counts(grid_area(rb)).get(PAPER_MAT, 0)}")
+    rb.chart.close()
+    white_src = make_source(60, 60, (255, 255, 255))
+    rw = proc.process_image(white_src, 10, 10, cell_size=40, save=False)
+    report("浅色珠上色号用 ink（深咖墨）",
+           counts(grid_area(rw)).get(INK, 0) > 10,
+           f"ink={counts(grid_area(rw)).get(INK, 0)}")
+    rw.chart.close()
+
+    # 6) finished 成品预览背景 = paper（透明格露出纸底）
+    rgba = Image.new("RGBA", (40, 20), (0, 0, 0, 0))
+    for x in range(20):
+        for y in range(20):
+            rgba.putpixel((x, y), (220, 30, 30, 255))
+    trans = os.path.join(TEST_DIR, "editorial_trans.png")
+    rgba.save(trans)
+    rt = proc.process_image(trans, 20, 10, cell_size=20, show_finished=True,
+                            save=False)
+    hole = rt.finished.convert("RGB").getpixel((rt.finished.width - 1, 1))
+    report("finished 成品背景 = paper", hole == PAPER, str(hole))
+    rt.chart.close()
+    rt.finished.close()
+
+    # 7) dark_chart = espresso / cream / brass（不是旧蓝灰）
+    rd = proc.process_image(blocks, 29, 29, cell_size=40, show_finished=True,
+                            save=False,
+                            effects=[{"id": "dark_chart", "params": {}}])
+    dc = rd.chart.convert("RGB")
+    dcc = counts(dc)
+    report("dark_chart 背景 = espresso #17120D",
+           dc.getpixel((dc.size[0] - 3, 3)) == DARK_BG,
+           str(dc.getpixel((dc.size[0] - 3, 3))))
+    report("dark_chart 使用奶油墨/黄铜（非旧蓝灰）",
+           dcc.get(DARK_INK, 0) > 200 and dcc.get(DARK_ACCENT, 0) > 50
+           and (0, 120, 215) not in dcc,
+           f"cream={dcc.get(DARK_INK, 0)} brass={dcc.get(DARK_ACCENT, 0)}")
+
+    # 7b) CJK 字体回退回归（Menlo/mono 无中文字形 → 必须分段用 body 字体）
+    from PIL import ImageDraw as _ID
+    _spy_calls = []
+    _orig_text = _ID.ImageDraw.text
+
+    def _spy_text(self, xy, text, *a, **kw):
+        _f = kw.get("font")
+        _spy_calls.append((str(text), getattr(_f, "path", "") if _f is not None else ""))
+        return _orig_text(self, xy, text, *a, **kw)
+
+    _ID.ImageDraw.text = _spy_text
+    try:
+        _rtofu = proc.process_image(blocks, 29, 29, cell_size=60,
+                                    show_finished=True, save=False)
+        _rtofu.chart.close()
+        _rtofu.finished.close()
+        proc._pdf_bom_pages({"H1": {"rgb": (255, 255, 255), "name": "纯白",
+                                    "code": "H1", "count": 10, "index": 0}})
+    finally:
+        _ID.ImageDraw.text = _orig_text
+    _bad = [(t, fp) for t, fp in _spy_calls
+            if re.search(r"[\u4e00-\u9fff]", t)
+            and (fp == "" or any(k in fp for k in
+                 ("Menlo", "SFNSMono", "DejaVuSansMono", "consola", "cour")))]
+    report("含 CJK 文本不再使用等宽字体（tofu 回归）", not _bad, str(_bad[:3]))
+    _runs = proc._text_runs("约 30×30 cm · 5mm/颗")
+    report("混排分段正确（约/颗 归 CJK 段）",
+           [x for x, _is_cjk in _runs if _is_cjk] == ["约", "颗"], str(_runs))
+
+    # 8) PDF：A4/BOM 页纸底、无旧蓝、页面尺寸不变
+    page = proc._export_pdf_a4_page(rd.chart)
+    pc = counts(page)
+    report("A4 PDF 页面底色 = paper", page.getpixel((5, 5)) == PAPER,
+           str(page.getpixel((5, 5))))
+    report("A4 PDF 无旧蓝色强调", (0, 120, 215) not in pc)
+    report("A4 PDF 页面尺寸 = A4 300dpi",
+           page.size == proc._a4_page_size(300), str(page.size))
+    _band_h = int(14 / 25.4 * 300)
+    _bottom = page.crop((0, page.size[1] - _band_h, page.size[0], page.size[1]))
+    _bc = counts(_bottom)
+    report("PDF 页底不重复 PLATE 页脚（仅细框/页码）",
+           _bc.get(ACCENT, 0) == 0 and _bc.get(INK_MUTED, 0) > 10,
+           f"accent={_bc.get(ACCENT, 0)} muted={_bc.get(INK_MUTED, 0)}")
+    bom_pages = proc._pdf_bom_pages(rd.color_stats)
+    bp = bom_pages[0]
+    bpc = counts(bp)
+    report("BOM 页纸底 = paper", bp.getpixel((5, 5)) == PAPER,
+           str(bp.getpixel((5, 5))))
+    report("BOM 页无旧蓝色强调", (0, 120, 215) not in bpc)
+    report("BOM 页尺寸 = A4 300dpi 且分页 ≥ 1",
+           bp.size == proc._a4_page_size(300) and len(bom_pages) >= 1,
+           f"size={bp.size} pages={len(bom_pages)}")
+    bom_bw = proc._pdf_bom_pages(rd.color_stats, bw=True)
+    report("BOM 黑白模式仍为纸底且可生成",
+           bom_bw and bom_bw[0].getpixel((5, 5)) == PAPER)
+
+    for im in (r.chart, r.finished, rd.chart, page):
+        im.close()
 
 
 def test_stage3():
@@ -1727,11 +1955,11 @@ def test_audit_regressions():
            _coerce_grid_color("#C8C8C8") == (200, 200, 200))
     report("grid_color 列表", _coerce_grid_color([1, 2, 3]) == (1, 2, 3))
     report("grid_color 非法回退默认",
-           _coerce_grid_color("boom") == (200, 200, 200))
+           _coerce_grid_color("boom") == DEFAULT_GRID_RGB)
     report("grid_color None 回退默认",
-           _coerce_grid_color(None) == (200, 200, 200))
+           _coerce_grid_color(None) == DEFAULT_GRID_RGB)
     report("grid_color 越界回退默认",
-           _coerce_grid_color([300, 0, 0]) == (200, 200, 200))
+           _coerce_grid_color([300, 0, 0]) == DEFAULT_GRID_RGB)
 
     # 6. settings_set 类型清洗
     clean = _sanitize_settings({"cell_px": ["a"], "show_grid": {},
@@ -1759,6 +1987,7 @@ def main():
     test_core_server()
     test_effects()
     test_effect_quality_fixes()
+    test_editorial_theme()
     test_stage3()
     test_output_prune()
     test_wysiwyg_link()

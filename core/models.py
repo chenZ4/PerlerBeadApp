@@ -20,8 +20,31 @@ RATIO_FIXED = ("1:1 (正方形)", "4:3", "3:4", "16:9", "9:16")
 RATIO_CUSTOM = "自定义"
 RATIOS = [RATIO_ORIGINAL, RATIO_FIT_BOX] + list(RATIO_FIXED) + [RATIO_CUSTOM]
 
-DEFAULT_GRID_COLOR = "#C8C8C8"
-DEFAULT_GRID_RGB = (200, 200, 200)
+# ---------- Editorial 视觉 tokens（T15；与 qa/ui/theme/README.md / DesignSystem.swift 同源）----------
+# 引擎输出（图纸 PNG / 成品 / PDF）与 App UI 共用同一套「暖纸底 + 深咖墨 + 干邑黄铜」色值。
+PAPER = (244, 237, 225)             # #F4EDE1 暖羊皮纸底
+PAPER_DEEP = (235, 225, 210)        # #EBE1D2 图版衬纸/分区底
+PAPER_MAT = (251, 246, 236)         # #FBF6EC 卡片/奶油
+INK = (42, 33, 24)                  # #2A2118 深咖墨
+INK_SOFT = (77, 63, 48)             # #4D3F30 次级文字
+INK_MUTED = (114, 97, 74)           # #72614A 说明/图注
+HAIRLINE = (213, 196, 172)          # #D5C4AC 发丝线（默认网格线）
+HAIRLINE_SOFT = (230, 217, 197)     # #E6D9C5 浅分隔
+HAIRLINE_STRONG = (183, 164, 136)   # #B7A488 外铜框/裁切角线
+ACCENT = (138, 90, 51)              # #8A5A33 干邑/黄铜（唯一强调色）
+ACCENT_SOFT = (239, 224, 204)       # #EFE0CC 强调底
+# 暗色 editorial（dark_chart 图纸）
+DARK_BG = (23, 18, 13)              # #17120D espresso 底
+DARK_PANEL = (30, 24, 17)           # #1E1811 面板
+DARK_INK = (240, 231, 216)          # #F0E7D8 奶油色主文字
+DARK_INK_SOFT = (201, 185, 159)     # #C9B99F 次级
+DARK_HAIRLINE = (58, 47, 35)        # #3A2F23 暗发丝线
+DARK_ACCENT = (201, 155, 99)        # #C99B63 暗色黄铜
+
+# 默认网格线：暖发丝线（旧值 #C8C8C8 冷灰，T15 统一到 editorial tokens；
+# 历史记录中已存的旧色仍按字符串原样兼容）
+DEFAULT_GRID_COLOR = "#D5C4AC"
+DEFAULT_GRID_RGB = HAIRLINE
 DEFAULT_GRID = 50
 MAX_GRID_SIZE = 500
 BIG_GRID_WARN = 40000

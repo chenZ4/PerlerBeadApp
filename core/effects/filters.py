@@ -66,9 +66,10 @@ register(EffectSpec(
 
 
 def _dark_chart(opts, params, ctx):
+    # T15：暗色 editorial（espresso 底 / 奶油墨 / 黄铜网格），不再用旧蓝灰
     opts["dark"] = True
-    opts["background"] = hex_to_rgb_safe(params.get("background"), (30, 30, 30))
-    opts["grid_color"] = hex_to_rgb_safe(params.get("grid_color"), (90, 90, 90))
+    opts["background"] = hex_to_rgb_safe(params.get("background"), (23, 18, 13))
+    opts["grid_color"] = hex_to_rgb_safe(params.get("grid_color"), (58, 47, 35))
     return opts
 
 
@@ -77,8 +78,8 @@ register(EffectSpec(
     name="深色底图纸",
     category="chart",
     params={
-        "background": {"type": "color", "default": "#1E1E1E"},
-        "grid_color": {"type": "color", "default": "#5A5A5A"},
+        "background": {"type": "color", "default": "#17120D"},
+        "grid_color": {"type": "color", "default": "#3A2F23"},
     },
     description="深色底浅字图纸，护眼/省墨（仅影响图纸，不影响成品效果图）",
 ), _dark_chart)
