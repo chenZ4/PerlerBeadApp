@@ -38,7 +38,7 @@ PerlerBeadApp/
 │       ├── ContentView.swift  # 编辑杂志风主界面（报头/三栏/图版图注/特效画廊 sheet）
 │       ├── DesignSystem.swift # 老钱风 tokens（暖纸/深咖/干邑黄铜）/字体/原子组件（亮暗双主题）
 │       ├── EditorialAssets.swift # 内置素材加载（SPM Bundle.module / Xcode bundle / 源码树回退）
-│       ├── Resources/         # 内置素材（开始页 hero：photo→beads 过渡图）
+│       ├── Resources/         # 内置素材（开始页封面大图 2400×1800：照片→拼豆对角过渡）
 │       ├── Engine.swift       # 引擎协议客户端（stdio 行协议，主线程回调）
 │       ├── Models.swift       # GenerateResult 等协议模型（含 warnings 兼容解码）
 │       └── ColorChartView.swift
@@ -143,6 +143,16 @@ Swift 侧 `Engine` 处理行缓冲、超时（15s）、退出快速失败、回�
   clampOffset）——锚点缩放保持光标下像素不动；offset 钳制为「大图至少 15% 可见、小图居中」。
   单测 `app/Tests/PerlerAppTests/ZoomPanTests.swift`。
 - **快捷键**：⌘+ / ⌘− / ⌘0（重置视图）；双击居中；编辑模式下禁用拖拽（点击换色优先）。
+
+### 3.6 开始页封面（2.5.1）
+
+- 布局：左侧为整幅封面大图（2400×1800，左上清晰照片→右下拼豆对角过渡 + 渐进像素化 + 拼豆格线），
+  铺满内容区高度与左侧宽度，无边框；底部渐隐 scrim + 奶油色图注；右侧为 430pt 固定操作列
+  （标题 / CTA / 快捷键 / 输出）。封面不出现任何彩色模板缩略图（示例图版面版已移除，
+  模板入口保留在工作台侧栏下拉）。
+- 布局注意：hero 用 `GeometryReader` 显式尺寸 + 铺底 `Rectangle`，图片不参与 HStack 理想宽计算，
+  否则 `.aspectRatio(.fill)` 会把右列 430pt 压到 400、吃掉 30pt 右内边距（2.5.1 已修）。
+- 素材加载：`EditorialAssets.heroPhotoToBeadsCover`（SPM Bundle.module / Xcode Bundle.main / 源码树回退）。
 
 ## 4. 比例模式语义（核心易错点）
 

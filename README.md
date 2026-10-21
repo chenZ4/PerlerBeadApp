@@ -22,7 +22,7 @@
 - 批量队列：快照设置、缩略图、取消、防覆盖文件名、断点恢复
 - 历史记录（自动迁移旧格式）、设置持久化、撤销（结构化快照）、快捷键、拖拽选图
 - Swift 版特效库 **15 项全暴露**（描边/灰度/抖动/限色/风格预设/画面调整/裁剪/镜像/赛璐璐/霓虹/双色调/背景去除/大头等，带参数控件）、**参数变更 500ms 防抖自动重渲染预览**（无需再点生成）、非致命提示（如大头未检测到人脸）显示在状态栏、手动格子编辑（点击换色/撤销）、进度追踪（自动保存续做）、色卡窗口
-- Swift 版采用**老钱风/编辑杂志风界面**（2.5.0：暖羊皮纸 + 深咖墨 + 干邑/黄铜、报头双线/编号章节/图版图注 + 耗材 inspector，亮暗双主题；开始页为「照片 → 拼豆」hero 首图）
+- Swift 版采用**老钱风/编辑杂志风界面**（2.5.x：暖羊皮纸 + 深咖墨 + 干邑/黄铜、报头双线/编号章节/图版图注 + 耗材 inspector，亮暗双主题；开始页为**左侧整幅「照片 → 拼豆」背景大图** + 右侧操作列，无示例缩略图干扰）
 
 ## 环境准备
 
@@ -70,13 +70,14 @@ XCUITest 属可选观察项：需要 XcodeGen 生成工程，且依赖 macOS 自
 注意：测试套件会写共享 `output/`（并可能裁剪旧产物），必须顺序执行；不要并发跑。
 CI：push/PR 自动跑（GitHub Actions：Python 双平台 + Swift + Windows Tk 冒烟 + UI 测试观察项）。
 
-## QA 与 2.5.0 质量报告
+## QA 与 2.5.x 质量报告
 
 - 独立 QA（特效视觉复现/门禁有效性/测试污染）与修复证据：[qa/](qa/)（报告 + mockup + 截图 + 可复跑脚本）
 - 特效「代码可行但效果不可行」根因与修复前后数据：[qa/effects/report.md](qa/effects/report.md) / [qa/effects/T5_report.md](qa/effects/T5_report.md)
 - UI 审计与编辑杂志风设计/落地：[qa/ui/audit.md](qa/ui/audit.md) / [重构 mockup](qa/ui/mockups/mockup_01_main_1280.png)
-- 老钱风棕色 tokens/对比度（2.5.0）：[qa/ui/theme/README.md](qa/ui/theme/README.md) / [落地截图](qa/ui/after/README.md)
-- 缩放/平移修复与二轮独立验证：[qa/verify/](qa/verify/)
+- 老钱风棕色 tokens/对比度：[qa/ui/theme/README.md](qa/ui/theme/README.md) / [落地截图](qa/ui/after/README.md)
+- 缩放/平移修复与独立验证：[qa/verify/zoom_pan_and_theme_report.md](qa/verify/zoom_pan_and_theme_report.md)
+- 封面改版（去掉示例面板 + 左侧整幅 hero）独立验证：[qa/verify/cover_redesign_report.md](qa/verify/cover_redesign_report.md)
 - 开源算法/设计参考（含 license）：[qa/research/report.md](qa/research/report.md)
 - 门禁复测与测试有效性盲区：[qa/gates/report.md](qa/gates/report.md)
 

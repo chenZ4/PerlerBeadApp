@@ -620,3 +620,42 @@ plate 改为单一条件手势（编辑模式 tap / 否则 drag），修复双 `
 独立验证：[qa/verify/zoom_pan_and_theme_report.md](qa/verify/zoom_pan_and_theme_report.md)（缩放/平移功能与数学、事件到达级复现、主题取色/对比度、hero 显示、真实交互自动化限制）。
 swift test 增量为：AutoPreviewTests 6（2.4.0）+ ZoomPanTests 10 + AssetTests 1 + VerifyZoomPanTests 15（独立验证用例）。
 
+---
+
+# 7. 2.5.1 封面改版（2026-10-21 用户四轮反馈）
+
+用户反馈：①示例面板不要了，颜色特别不和谐；②老鹰图做成一张背景大图在整个左侧。
+
+## 7.1 改动
+
+- **移除示例面板**：封面右侧 coverRail 整块（示例图版 + 彩色模板缩略图）删除，`TemplateThumb` 一并清理；
+  模板入口仅保留在工作台侧栏「模板」下拉。封面页不再出现任何彩色缩略图。
+- **左侧整幅背景大图**：新增封面资产 `app/Sources/PerlerApp/Resources/hero_photo_to_beads_cover.jpg`
+  （2400×1800，4:3，左上清晰照片 → 右下拼豆对角过渡 + 渐进像素化 + 拼豆格线，约 606KB）；
+  以 `scaledToFill + clipped` 铺满内容区整个左侧（无边距/无框），底部渐隐 scrim + 奶油图注
+  （PLATE 00 / FROM PHOTOGRAPH TO BEAD / PHOTOGRAPH·BEADS）；鹰眼主体不被遮挡。
+- **右侧 430pt 操作列**：eyebrow、黄铜渐变宋体标题、standfirst、主 CTA + 拖入提示、快捷键 4 行、输出 3 行、本机处理说明；
+  1280×800 不滚动、CTA 首屏可见；亮暗双主题。
+- **P2 修复**：hero 用 `GeometryReader` 显式尺寸 + 铺底 Rectangle，切断图片理想宽传播；右列回到 430pt、
+  右内边距恢复 30pt（修复前被裁到 0–18.5pt）。
+- 旧横向 hero 资产（2400×1333）与 API 已删除，避免死重。
+
+## 7.2 独立验证（T13，全部 PASS）
+
+| 检查项 | 结果 |
+|---|---|
+| 示例面板/彩色缩略图移除 | PASS：四场景 hero 外饱和彩色像素 = 0（旧封面右栏 486px），OCR 无示例关键词 |
+| 左侧 hero 铺满 | PASS：1280×800 实测 879×682.5pt（占窗口宽 68.7% × 内容区高 100%），左/上/下贴边；hero 内纸底残留 0.07% |
+| scaledToFill 无变形 | PASS：结构性等比裁切；素材比例 4:3 由 AssetTests 断言 |
+| 图注/scrim 可读性 | PASS：图注带对比度 7.16:1（1280）/6.93:1（1440），scrim 区背景亮度为中部 6.7% |
+| 主 CTA 首屏 | PASS：OCR「选择图片⋯」完整在 1280×800 内 |
+| 快捷键/输出表 | PASS：7 行完整无截断 |
+| 工作台/画廊回归 | PASS：与 T10 截图逐像素 diff 0.008% / 0% |
+| P2 右内边距 | 已修复：1280 分隔线 849pt/右列 431/内边距 30pt，1440 分隔线 1009pt |
+
+报告：[qa/verify/cover_redesign_report.md](qa/verify/cover_redesign_report.md)；截图：[qa/ui/after/](qa/ui/after/README.md)。
+
+## 7.3 门禁
+
+封面改版后 `swift test 111`（旧横向 hero 测试删除后），最终门禁 249 + 92 + 12 + 111 = **464/0**（详见 qa/gates/final_report.md）。
+
