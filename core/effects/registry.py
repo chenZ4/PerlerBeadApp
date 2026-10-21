@@ -1,5 +1,5 @@
 # core/effects/registry.py - 特效注册表与管线执行
-from .base import EffectSpec
+from .base import EffectSpec, warn
 
 _EFFECTS = {}
 
@@ -30,8 +30,56 @@ def has_effect(effects, effect_id):
     return any(e.get("id") == effect_id for e in (effects or []))
 
 
+def coerce_params(effect_id, params):
+    """按注册 schema 钳制参数（公开入口：processor 的 dither 特判等也复用它）。
+
+    返回 (coerced_dict, changed_bool)：changed 表示有值被钳制/回退/丢弃，
+    供协议层生成 warnings。
+    """
+    item = _EFFECTS.get(effect_id)
+    if not item:
+        return {}, True
+    spec = item[0]
+    params = params or {}
+    out = {}
+    changed = False
+    for name, meta in spec.params.items():
+        value = params.get(name, meta.get("default"))
+        raw = value
+        try:
+            if meta.get("type") == "int":
+                value = int(value)
+                if "min" in meta:
+                    value = max(meta["min"], value)
+                if "max" in meta:
+                    value = min(meta["max"], value)
+            elif meta.get("type") == "float":
+                value = float(value)
+                if "min" in meta:
+                    value = max(meta["min"], value)
+                if "max" in meta:
+                    value = min(meta["max"], value)
+            elif meta.get("type") == "bool":
+                from ..models import as_bool
+                value = as_bool(value, bool(meta.get("default", False)))
+            elif meta.get("type") == "color":
+                value = str(value)
+            elif meta.get("type") == "choice":
+                if meta.get("options") and value not in meta["options"]:
+                    value = meta.get("default")
+        except (TypeError, ValueError):
+            value = meta.get("default")
+        if value != raw:
+            changed = True
+        out[name] = value
+    # schema 之外的键属于静默丢弃，也算一次「参数未生效」
+    if set(params.keys()) - set(spec.params.keys()):
+        changed = True
+    return out, changed
+
+
 def _coerce_params(params, schema):
-    """按 schema 约束参数（类型/范围/默认值）"""
+    """按 schema 约束参数（类型/范围/默认值）——兼容旧调用方"""
     out = {}
     for name, meta in schema.items():
         value = params.get(name, meta.get("default"))
@@ -74,8 +122,13 @@ def apply_phase(effects, phase, target, ctx=None):
     if not effects:
         return target
     for e in effects:
-        item = _EFFECTS.get(e.get("id"))
+        if not isinstance(e, dict):
+            warn(ctx, f"effects 项格式非法已忽略: {type(e).__name__}")
+            continue
+        eid = e.get("id")
+        item = _EFFECTS.get(eid)
         if not item:
+            warn(ctx, f"未知特效已忽略: {eid}")
             continue
         spec, handler = item
         fn = _phase_handler(handler, spec, phase)
@@ -83,4 +136,11 @@ def apply_phase(effects, phase, target, ctx=None):
             continue
         params = _coerce_params(e.get("params") or {}, spec.params)
         target = fn(target, params, ctx)
+        if ctx is not None:
+            try:
+                applied = ctx.cache.setdefault("effects_applied", [])
+                if eid not in applied:
+                    applied.append(eid)
+            except Exception:  # noqa: BLE001
+                pass
     return target

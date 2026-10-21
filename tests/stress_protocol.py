@@ -39,6 +39,23 @@ for _y in range(240):
         _px[_x, _y] = (_x * 255 // 240, _y * 255 // 240, 128)
 _img.save(SRC)
 
+# --- T7 测试隔离：引擎用户数据/中间产物重定向到临时目录（子进程继承 PERLER_*）---
+import atexit
+import shutil as _iso_shutil
+
+ISO_ROOT = tempfile.mkdtemp(prefix="perler_iso_stress_")
+ISO_OUTPUT = os.path.join(ISO_ROOT, "output")
+os.makedirs(ISO_OUTPUT, exist_ok=True)
+os.environ.update({
+    "PERLER_OUTPUT_DIR": ISO_OUTPUT,
+    "PERLER_TRACK_DIR": os.path.join(ISO_ROOT, "track"),
+    "PERLER_SETTINGS_FILE": os.path.join(ISO_ROOT, "app_settings.json"),
+    "PERLER_QUEUE_FILE": os.path.join(ISO_ROOT, "queue_state.json"),
+    "PERLER_HISTORY_FILE": os.path.join(ISO_ROOT, "history.json"),
+    "PERLER_MY_COLORS_FILE": os.path.join(ISO_ROOT, "my_colors.json"),
+})
+atexit.register(_iso_shutil.rmtree, ISO_ROOT, ignore_errors=True)
+
 
 class EngineHandle:
     """异步收集所有响应的引擎句柄（不阻塞发送端）"""

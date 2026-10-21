@@ -21,6 +21,44 @@ TEST_DIR = tempfile.mkdtemp(prefix="perler_test_")
 OUT_DIR = os.path.join(TEST_DIR, "out")
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# --- T7 测试隔离：所有用户数据/中间产物路径重定向到临时目录 ---
+# 进程内直接使用 core 模块（monkeypatch）；子进程 core_server.py 通过继承
+# PERLER_* 环境变量隔离（见 core_server.py 顶部 _env_override_path）。
+import atexit
+import shutil as _iso_shutil
+
+import core.history_manager as _iso_history
+import core.my_colors as _iso_my_colors
+import core.processor as _iso_processor
+import core.settings as _iso_settings
+
+ISO_ROOT = tempfile.mkdtemp(prefix="perler_iso_")
+ISO_OUTPUT = os.path.join(ISO_ROOT, "output")
+os.makedirs(ISO_OUTPUT, exist_ok=True)
+ISO_TRACK = os.path.join(ISO_ROOT, "track")
+ISO_SETTINGS = os.path.join(ISO_ROOT, "app_settings.json")
+ISO_QUEUE = os.path.join(ISO_ROOT, "queue_state.json")
+ISO_HISTORY = os.path.join(ISO_ROOT, "history.json")
+ISO_LEGACY_HISTORY = os.path.join(ISO_ROOT, "legacy_history.json")
+ISO_MY_COLORS = os.path.join(ISO_ROOT, "my_colors.json")
+os.environ.update({
+    "PERLER_OUTPUT_DIR": ISO_OUTPUT,
+    "PERLER_TRACK_DIR": ISO_TRACK,
+    "PERLER_SETTINGS_FILE": ISO_SETTINGS,
+    "PERLER_QUEUE_FILE": ISO_QUEUE,
+    "PERLER_HISTORY_FILE": ISO_HISTORY,
+    "PERLER_MY_COLORS_FILE": ISO_MY_COLORS,
+})
+_iso_processor.OUTPUT_DIR = ISO_OUTPUT
+_iso_settings.SETTINGS_FILE = ISO_SETTINGS
+_iso_settings.QUEUE_FILE = ISO_QUEUE
+_iso_settings.SettingsStore.__init__.__defaults__ = (ISO_SETTINGS, ISO_QUEUE)
+_iso_history.HISTORY_FILE = ISO_HISTORY
+_iso_history.LEGACY_HISTORY_FILE = ISO_LEGACY_HISTORY
+_iso_my_colors.MY_COLORS_FILE = ISO_MY_COLORS
+HISTORY_FILE = ISO_HISTORY  # 覆盖顶部 from ... import HISTORY_FILE 的本地绑定
+atexit.register(_iso_shutil.rmtree, ISO_ROOT, ignore_errors=True)
+
 
 def report(name, ok, detail=""):
     if ok:
@@ -220,7 +258,7 @@ def test_history():
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
             backup = f.read()
 
-    legacy = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "history.json")
+    legacy = _iso_history.LEGACY_HISTORY_FILE  # T7: 隔离路径，不读仓库 history.json
     if os.path.exists(legacy) and not os.path.exists(HISTORY_FILE):
         import shutil
         shutil.copy(legacy, HISTORY_FILE)
@@ -689,12 +727,20 @@ def test_core_server():
         report("generate 返回 finished_path 且文件存在",
                fp and os.path.isfile(fp), str(fp))
 
+        r = req(36, "generate", {"image_path": src, "grid_w": 20, "grid_h": 20,
+                                 "cell_size": 40,
+                                 "effects": [{"id": "chibi", "params": {}}]})
+        report("generate 响应含 warnings 字段（协议向后兼容）",
+               r.get("ok") and isinstance(r.get("warnings"), list)
+               and len(r["warnings"]) >= 1,
+               str(r.get("warnings")))
+
         req(33, "track_save", {"key": "t_test", "cells": ["1:1", "2:2"]})
         r = req(34, "track_load", {"key": "t_test"})
         report("track 持久化到项目目录", len(r.get("track", [])) == 2,
                str(r.get("track")))
         import shutil
-        tdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "track")
+        tdir = ISO_TRACK  # T7: 只清理隔离目录，绝不删除仓库 track/ 用户进度
         if os.path.isdir(tdir):
             shutil.rmtree(tdir, ignore_errors=True)
     finally:
@@ -919,6 +965,188 @@ def test_effects():
     r.chart.close()
 
 
+def test_effect_quality_fixes():
+    """T5 特效质量修复回归：去黑网/线稿连续/赛璐璐不压暗/风格色板保结构/
+    透明 alpha 保持/背景去除连通域/warnings/dither 钳制/crop 默认可见。"""
+    print("== 测试7d: 特效质量修复（T5） ==")
+    from core.effects.outline import _outline_index
+
+    proc = ImageProcessor()
+    pal = get_palette("mard_221")
+    outline_rgb = np.asarray(pal.colors[_outline_index(pal, "#1A1A1A")])
+    kw = dict(cell_size=16, save=False, show_finished=True,
+              show_color_legend=False, show_row_col_labels=False, show_grid=False)
+
+    def cells_of(res):
+        a = np.asarray(res.finished.convert("RGB"))
+        fh, fw = a.shape[:2]
+        ys = np.clip(((np.arange(res.grid_h) + 0.5) * fh / res.grid_h).astype(int),
+                     0, fh - 1)
+        xs = np.clip(((np.arange(res.grid_w) + 0.5) * fw / res.grid_w).astype(int),
+                     0, fw - 1)
+        return a[np.ix_(ys, xs)]
+
+    from core.colors import rgb_to_lab
+
+    def mean_l(c):
+        return float(rgb_to_lab(np.asarray(c, dtype=np.float32))[..., 0].mean())
+
+    def near_white(c):
+        lab = rgb_to_lab(np.asarray(c, dtype=np.float32))
+        return float((lab[..., 0] >= 92).mean())
+
+    golden_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
+    detail = os.path.join(golden_dir, "source.png")   # 160x120 随机细节图
+
+    # 1) 邻接描边：细节图不再全图黑网
+    base = proc.process_image(detail, 40, 30, effects=[], **kw)
+    r = proc.process_image(detail, 40, 30,
+                           effects=[{"id": "outline_cell", "params": {}}], **kw)
+    share = float(np.all(cells_of(r) == outline_rgb, axis=-1).mean())
+    report("邻接描边去黑网（细节图描边占比 2%~25%）", 0.02 < share < 0.25,
+           f"share={share:.3f}")
+    base.chart.close()
+    r.chart.close()
+
+    # 2) 平涂块图仍保留清晰轮廓
+    blocks = os.path.join(TEST_DIR, "fx_blocks.png")
+    bimg = Image.new("RGB", (160, 160), (255, 255, 255))
+    bp = bimg.load()
+    cols = [(240, 120, 40), (80, 190, 180), (230, 110, 120), (60, 60, 70)]
+    for y in range(20, 140):
+        for x in range(20, 140):
+            quad = min(1, (x - 20) // 60) + 2 * min(1, (y - 20) // 60)
+            bp[x, y] = cols[quad]
+    bimg.save(blocks)
+    rb = proc.process_image(blocks, 40, 40,
+                            effects=[{"id": "outline_cell", "params": {}}], **kw)
+    shareb = float(np.all(cells_of(rb) == outline_rgb, axis=-1).mean())
+    report("邻接描边在平涂图保留轮廓（描边占比 ≥ 5%）", shareb >= 0.05,
+           f"share={shareb:.3f}")
+    rb.chart.close()
+
+    # 3) 线稿描边：网格尺度 + 连续线条（非孤立噪点）
+    bb = proc.process_image(detail, 40, 30, effects=[], **kw)
+    bbc = cells_of(bb)
+    re_ = proc.process_image(detail, 40, 30,
+                             effects=[{"id": "outline_edge", "params": {}}], **kw)
+    ec = cells_of(re_)
+    diff = np.abs(ec.astype(int) - bbc.astype(int)).max(-1) > 12
+    nb = np.zeros_like(diff, dtype=int)
+    nb[1:, :] += diff[:-1, :]
+    nb[:-1, :] += diff[1:, :]
+    nb[:, 1:] += diff[:, :-1]
+    nb[:, :-1] += diff[:, 1:]
+    vals = nb[diff]
+    changed = float(diff.mean())
+    ge2 = float((vals >= 2).mean()) if vals.size else 0.0
+    report("线稿描边覆盖率可读（2%~35%）", 0.02 <= changed <= 0.35,
+           f"changed={changed:.3f}")
+    report("线稿描边线条连续（≥2 邻居占比 ≥ 35%）", ge2 >= 0.35, f"ge2={ge2:.3f}")
+    bb.chart.close()
+    re_.chart.close()
+
+    # 4) 赛璐璐：不压暗、不崩坏
+    base_c = cells_of(proc.process_image(blocks, 40, 40, effects=[], **kw))
+    rc = proc.process_image(blocks, 40, 40,
+                            effects=[{"id": "cel_shade", "params": {"levels": 4}}], **kw)
+    cc = cells_of(rc)
+    report("赛璐璐不压暗（平均亮度下降 ≤ 6）", mean_l(cc) >= mean_l(base_c) - 6,
+           f"before={mean_l(base_c):.1f} after={mean_l(cc):.1f}")
+    report("赛璐璐不崩坏（用色数 ≤ 64）", len(rc.color_stats) <= 64,
+           f"colors={len(rc.color_stats)}")
+    rc.chart.close()
+
+    # 5) 风格色板：不洗白（亮度结构保持、用色 ≤ 预设色数、近白不激增）
+    grad = Image.fromarray(np.stack([
+        np.tile(np.arange(200), (200, 1)),
+        np.tile(np.arange(200)[:, None], (1, 200)),
+        np.full((200, 200), 128)], -1).astype(np.uint8))
+    grad_path = os.path.join(TEST_DIR, "fx_grad.png")
+    grad.save(grad_path)
+    gb = proc.process_image(grad_path, 40, 40, effects=[], **kw)
+    gbc = cells_of(gb)
+    gp = proc.process_image(grad_path, 40, 40,
+                            effects=[{"id": "preset", "params": {"preset": "pastel"}}], **kw)
+    gpc = cells_of(gp)
+    report("风格色板用色 ≤ 预设色数", len(gp.color_stats) <= 6,
+           f"colors={len(gp.color_stats)}")
+    report("风格色板不洗白（平均亮度差 ≤ 12）",
+           abs(mean_l(gpc) - mean_l(gbc)) <= 12,
+           f"before={mean_l(gbc):.1f} after={mean_l(gpc):.1f}")
+    report("风格色板近白珠不激增（增幅 ≤ 5%）",
+           near_white(gpc) <= near_white(gbc) + 0.05,
+           f"before={near_white(gbc):.3f} after={near_white(gpc):.3f}")
+    gb.chart.close()
+    gp.chart.close()
+
+    # 6) 透明 PNG：会 convert 的 preprocess 特效必须保持 alpha
+    rgba = Image.new("RGBA", (40, 20), (0, 0, 0, 0))
+    for x in range(20):
+        for y in range(20):
+            rgba.putpixel((x, y), (220, 30, 30, 255))
+    alpha_src = os.path.join(TEST_DIR, "fx_alpha.png")
+    rgba.save(alpha_src)
+    for eid in ("grayscale", "cel_shade", "duotone"):
+        ra = proc.process_image(alpha_src, 20, 10, cell_size=16, save=False,
+                                effects=[{"id": eid, "params": {}}],
+                                show_color_legend=False, show_row_col_labels=False)
+        report(f"{eid} 保持透明背景（空格≈100）", ra and abs(ra.total_beads - 100) <= 5,
+               f"total={ra.total_beads if ra else None}")
+        if ra:
+            ra.chart.close()
+
+    # 7) 背景去除：边界连通域 → 内部白色主体保留
+    ghost = Image.new("RGB", (160, 160), (190, 220, 240))
+    for y in range(40, 120):
+        for x in range(40, 120):
+            ghost.putpixel((x, y), (255, 255, 255))
+    ghost_path = os.path.join(TEST_DIR, "fx_ghost.png")
+    ghost.save(ghost_path)
+    rg = proc.process_image(ghost_path, 40, 40,
+                            effects=[{"id": "bg_remove", "params": {"color": "#FFFFFF"}}], **kw)
+    white_beads = sum(1 for s in rg.color_stats.values() if min(s["rgb"]) >= 245)
+    report("背景去除保留内部白色主体（不误删）",
+           rg.total_beads == 1600 and white_beads > 0,
+           f"total={rg.total_beads} white={white_beads} warnings={rg.warnings}")
+    report("背景去除对未触边背景色给出 warning",
+           any("未出现在图像边界" in w for w in rg.warnings), str(rg.warnings))
+    rg.chart.close()
+
+    # 8) chibi 无脸 → warnings（不再静默）
+    rc2 = proc.process_image(detail, 20, 15, cell_size=40, save=False,
+                             effects=[{"id": "chibi", "params": {}}])
+    report("chibi 无脸不再静默（warnings 非空）",
+           rc2 is not None and any("大头" in w for w in rc2.warnings),
+           str(getattr(rc2, "warnings", None)))
+    if rc2:
+        rc2.chart.close()
+
+    # 9) dither strength 走 schema 钳制（5.0 → 1.5）
+    r15 = proc.process_image(grad_path, 40, 40, effects=[
+        {"id": "dither", "params": {"strength": 1.5}}], **kw)
+    r50 = proc.process_image(grad_path, 40, 40, effects=[
+        {"id": "dither", "params": {"strength": 5.0}}], **kw)
+    report("dither strength 超上限被钳制（5.0 == 1.5）",
+           r15.color_stats.keys() == r50.color_stats.keys()
+           and r15.total_beads == r50.total_beads,
+           f"colors15={len(r15.color_stats)} colors50={len(r50.color_stats)}")
+    report("dither 钳制给出 warning", any("钳制" in w for w in r50.warnings),
+           str(r50.warnings))
+    r15.chart.close()
+    r50.chart.close()
+
+    # 10) crop 默认参数开启即有明显裁剪（不再是恒等裁剪）
+    base_crop = proc.process_image(detail, 40, 30, effects=[], **kw)
+    r_crop = proc.process_image(detail, 40, 30,
+                                effects=[{"id": "crop", "params": {}}], **kw)
+    diff = np.abs(cells_of(r_crop).astype(int) - cells_of(base_crop).astype(int)).max(-1) > 12
+    report("crop 默认参数产生明显裁剪（变化格 > 20%）", diff.mean() > 0.2,
+           f"changed={diff.mean():.3f}")
+    base_crop.chart.close()
+    r_crop.chart.close()
+
+
 def test_stage3():
     print("== 测试8: 引擎补全（色卡文件化/My Colors/模板/BOM/透明PNG/板数） ==")
     from core.colors import PALETTE_OPTIONS, get_palette
@@ -1125,11 +1353,11 @@ def test_robustness():
         report("track_load 路径穿越返回空", r.get("ok") and r.get("track") == [])
         req(6, "track_save", {"key": "../escape", "cells": ["1:1"]})
         report("track_save 路径穿越不落盘",
-               not os.path.exists(os.path.join(root, "escape.json")))
+               not os.path.exists(os.path.join(ISO_ROOT, "escape.json")))
         req(7, "track_save", {"key": "e2e_key", "cells": ["1:1", "2:2"]})
         r = req(8, "track_load", {"key": "e2e_key"})
         report("合法 track key 正常读写", r.get("track") == ["1:1", "2:2"])
-        tdir = os.path.join(root, "track")
+        tdir = ISO_TRACK  # T7: 只清理隔离目录
         if os.path.isdir(tdir):
             _shutil.rmtree(tdir, ignore_errors=True)
 
@@ -1317,6 +1545,13 @@ def test_output_prune():
             continue
     canary_mtime = min(existing_ages) - 3600 if existing_ages else now - 7200
     os.utime(canary, (canary_mtime, canary_mtime))
+    # T7 隔离后 output/ 是空的临时目录；补足 >keep 个"更新"文件，保留
+    # 「canary 最旧 → 必然被 prune」的原测试语义（不再依赖仓库 output/ 的既有产物）。
+    for _i in range(52):
+        filler = os.path.join(real_output, f"perler_prune_filler_{_i:03d}.png")
+        with open(filler, "w") as _f:
+            _f.write("x")
+        os.utime(filler, (now, now))
     src = make_source(100, 100)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     proc = subprocess.Popen(
@@ -1523,6 +1758,7 @@ def main():
     test_golden_matrix()
     test_core_server()
     test_effects()
+    test_effect_quality_fixes()
     test_stage3()
     test_output_prune()
     test_wysiwyg_link()

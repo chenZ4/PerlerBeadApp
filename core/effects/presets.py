@@ -2,7 +2,7 @@
 import numpy as np
 
 from ..colors import rgb_to_lab
-from .base import EffectSpec
+from .base import EffectSpec, lab_to_rgb, warn
 from .registry import register
 
 # 社区风格色板（RGB，任意色卡中取最近色）
@@ -36,7 +36,7 @@ PRESETS = {
 
 
 def _max_colors(idx, params, ctx):
-    palette = ctx.palette
+    palette = ctx.palette if ctx is not None else None
     if palette is None:
         return idx
     limit = int(params.get("max", 12))
@@ -71,29 +71,79 @@ register(EffectSpec(
 
 
 def _preset(idx, params, ctx):
-    palette = ctx.palette
+    """风格色板：保亮度结构的「秩映射」——禁止整图洗白。
+
+    旧实现：每个色卡色 → 最近预设色的最近色卡色。预设色多偏浅，照片被整体
+    映射到近白（T1 实测 L +40、近白珠 6%→28%）。
+    新实现：
+      1) 统计图像实际使用的色卡色，按使用次数等分到 K 组（K = 预设色数）；
+      2) 每组按明度排序对应一个预设色锚点（暗组→暗锚点）；
+      3) 目标色 = 锚点色相/彩度 + 该组平均明度（CIELAB L），再映射到最近色卡色。
+    → 输出用色 ≤ 预设色数、明度分布接近原图、风格色相来自预设。
+    """
+    palette = ctx.palette if ctx is not None else None
     if palette is None:
         return idx
     preset_name = params.get("preset", "pastel")
     preset = PRESETS.get(preset_name)
     if not preset:
-        return idx
-    target_lab = rgb_to_lab(np.asarray(preset["colors"], dtype=np.float32))
-    pal_lab = palette.lab
-    # 预设色 → 色卡最近索引（CIELAB 感知距离）
-    d = ((target_lab[:, None, :] - pal_lab[None, :, :]) ** 2).sum(-1)
-    subset = d.argmin(-1)  # 每个预设色的色卡索引（可能有重复）
-    subset = list(dict.fromkeys(int(i) for i in subset))
-    # 每个色卡色 → 最近预设色
-    d2 = ((pal_lab[:, None, :] - target_lab[None, :, :]) ** 2).sum(-1)
-    map_to_preset = d2.argmin(-1)  # 色卡索引 → 预设索引
-    subset_idx = np.asarray(subset, dtype=np.int32)
+        warn(ctx, f"风格色板：未知预设 {preset_name}，回退马卡龙")
+        preset = PRESETS["pastel"]
     flat = idx.reshape(-1)
-    out = np.empty_like(flat)
+    out = np.full_like(flat, -1)
     empty = flat < 0
-    out[empty] = -1
-    for i in np.nonzero(~empty)[0]:
-        out[i] = subset_idx[map_to_preset[flat[i]]]
+    valid_vals = flat[~empty]
+    if valid_vals.size == 0:
+        return out.reshape(idx.shape)
+    counts = np.bincount(valid_vals, minlength=len(palette.colors))
+    used = np.nonzero(counts > 0)[0]
+    if used.size <= 1:
+        # 单色图：无需风格化
+        out[~empty] = valid_vals
+        return out.reshape(idx.shape)
+
+    preset_lab = rgb_to_lab(np.asarray(preset["colors"], dtype=np.float32))  # (K,3)
+    k = max(2, len(preset_lab))
+    used_counts = counts[used].astype(np.float64)
+    used_lab = np.asarray(palette.lab[used], dtype=np.float64)
+    # 1) 等频（按使用次数）分组：每组占比接近 1/k
+    order = np.argsort(used_lab[:, 0])
+    used_sorted = used[order]
+    counts_sorted = used_counts[order]
+    cum = np.cumsum(counts_sorted)
+    total = cum[-1]
+    # 每组的累计次数边界
+    boundaries = np.searchsorted(cum, total * np.arange(1, k) / k, side="right")
+    groups = np.split(np.arange(used.size), boundaries)
+    # 2) 预设锚点按明度排序，暗组→暗锚点
+    anchor_order = np.argsort(preset_lab[:, 0])
+    anchors = preset_lab[anchor_order]
+    # 3) 每组映射到一个输出色卡色
+    lut = np.full(len(palette.colors), -1, dtype=np.int32)
+    for gi, g in enumerate(groups):
+        if g.size == 0:
+            continue
+        anchor_idx = int(round(gi * (len(anchors) - 1) / max(1, k - 1)))
+        anchor = anchors[anchor_idx]
+        mean_l = float(np.average(used_lab[order][g][:, 0], weights=counts_sorted[g]))
+        target_lab = np.array([np.clip(mean_l, 12.0, 95.0), anchor[1], anchor[2]],
+                              dtype=np.float32)
+        target_rgb = lab_to_rgb(target_lab[None, :])[0]
+        target_lab2 = rgb_to_lab(target_rgb[None, :].astype(np.float32))[0]
+        d = ((np.asarray(palette.lab) - target_lab2) ** 2).sum(-1)
+        out_idx = int(np.argmin(d))
+        lut[used_sorted[g]] = out_idx
+    # 未映射到的使用色（极端情况）回退到按明度最近的组色
+    missing = np.nonzero(lut[used] < 0)[0]
+    if missing.size:
+        mapped_used = used[lut[used] >= 0]
+        mapped_lut = lut[mapped_used]
+        for mi in missing:
+            raw = used[mi]
+            lab = np.asarray(palette.lab[raw])
+            best = int(np.argmin(((np.asarray(palette.lab[mapped_used]) - lab) ** 2).sum(-1)))
+            lut[raw] = int(mapped_lut[best])
+    out[~empty] = lut[valid_vals]
     return out.reshape(idx.shape)
 
 
@@ -103,5 +153,5 @@ register(EffectSpec(
     category="grid",
     params={"preset": {"type": "choice", "default": "pastel",
                        "options": list(PRESETS.keys())}},
-    description="一键使用社区流行风格色板（马卡龙/Preppy/万圣节/圣诞/Cottagecore）",
+    description="风格色板：按明度秩映射到预设色（保亮度结构，用色 ≤ 预设色数）",
 ), _preset)

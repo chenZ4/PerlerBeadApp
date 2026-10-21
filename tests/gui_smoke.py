@@ -35,9 +35,39 @@ def report(name, ok, detail=""):
 from core.models import QueueItem
 from core.settings import QUEUE_FILE, load_queue
 
-# 历史记录重定向到临时目录，避免污染仓库 history.json
+# --- T7 测试隔离：设置/队列/历史/输出全部重定向到 TEST_DIR，禁止触碰仓库根用户数据 ---
+import atexit
+import shutil as _iso_shutil
+
 import core.history_manager as _hm
-_hm.HISTORY_FILE = os.path.join(TEST_DIR, "history.json")
+import core.my_colors as _iso_my_colors
+import core.processor as _iso_processor
+import core.settings as _iso_settings
+
+ISO_OUTPUT = os.path.join(TEST_DIR, "output")
+os.makedirs(ISO_OUTPUT, exist_ok=True)
+ISO_SETTINGS = os.path.join(TEST_DIR, "app_settings.json")
+ISO_QUEUE = os.path.join(TEST_DIR, "queue_state.json")
+ISO_HISTORY = os.path.join(TEST_DIR, "history.json")
+ISO_LEGACY_HISTORY = os.path.join(TEST_DIR, "legacy_history.json")
+ISO_MY_COLORS = os.path.join(TEST_DIR, "my_colors.json")
+os.environ.update({
+    "PERLER_OUTPUT_DIR": ISO_OUTPUT,
+    "PERLER_TRACK_DIR": os.path.join(TEST_DIR, "track"),
+    "PERLER_SETTINGS_FILE": ISO_SETTINGS,
+    "PERLER_QUEUE_FILE": ISO_QUEUE,
+    "PERLER_HISTORY_FILE": ISO_HISTORY,
+    "PERLER_MY_COLORS_FILE": ISO_MY_COLORS,
+})
+_iso_processor.OUTPUT_DIR = ISO_OUTPUT
+_iso_settings.SETTINGS_FILE = ISO_SETTINGS
+_iso_settings.QUEUE_FILE = ISO_QUEUE
+_iso_settings.SettingsStore.__init__.__defaults__ = (ISO_SETTINGS, ISO_QUEUE)
+_hm.HISTORY_FILE = ISO_HISTORY
+_hm.LEGACY_HISTORY_FILE = ISO_LEGACY_HISTORY
+_iso_my_colors.MY_COLORS_FILE = ISO_MY_COLORS
+QUEUE_FILE = ISO_QUEUE
+atexit.register(_iso_shutil.rmtree, TEST_DIR, ignore_errors=True)
 
 from ui.app_controller import AppController
 

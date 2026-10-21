@@ -2,16 +2,17 @@
 from PIL import Image, ImageEnhance
 
 from ..colors import hex_to_rgb_safe
-from .base import EffectSpec
+from .base import EffectSpec, preserve_alpha
 from .registry import register
 
 
 def _grayscale(img, params, ctx):
     contrast = float(params.get("contrast", 1.0))
-    out = img.convert("L").convert("RGB")
+    # 先在 RGB 上处理，再还原 alpha（convert("L") 会丢透明通道）
+    out = img.convert("RGB").convert("L").convert("RGB")
     if abs(contrast - 1.0) > 0.01:
         out = ImageEnhance.Contrast(out).enhance(contrast)
-    return out
+    return preserve_alpha(img, out)
 
 
 register(EffectSpec(
@@ -19,12 +20,12 @@ register(EffectSpec(
     name="黑白/灰度",
     category="preprocess",
     params={"contrast": {"type": "float", "default": 1.0, "min": 0.5, "max": 2.0}},
-    description="灰度出图，可调对比度",
+    description="灰度出图，可调对比度（保持透明背景）",
 ), _grayscale)
 
 
 def _adjust(img, params, ctx):
-    out = img
+    out = img.convert("RGB")
     b = float(params.get("brightness", 1.0))
     c = float(params.get("contrast", 1.0))
     s = float(params.get("saturation", 1.0))
@@ -34,7 +35,7 @@ def _adjust(img, params, ctx):
         out = ImageEnhance.Contrast(out).enhance(c)
     if abs(s - 1.0) > 0.01:
         out = ImageEnhance.Color(out).enhance(s)
-    return out
+    return preserve_alpha(img, out)
 
 
 register(EffectSpec(
@@ -44,9 +45,9 @@ register(EffectSpec(
     params={
         "brightness": {"type": "float", "default": 1.0, "min": 0.5, "max": 1.5},
         "contrast": {"type": "float", "default": 1.0, "min": 0.5, "max": 1.5},
-        "saturation": {"type": "float", "default": 1.0, "min": 0.0, "max": 2.0},
+        "saturation": {"type": "float", "default": 1.2, "min": 0.0, "max": 2.0},
     },
-    description="像素化前调整亮度、对比度、饱和度",
+    description="像素化前调整亮度、对比度、饱和度（保持透明背景）",
 ), _adjust)
 
 
@@ -79,5 +80,5 @@ register(EffectSpec(
         "background": {"type": "color", "default": "#1E1E1E"},
         "grid_color": {"type": "color", "default": "#5A5A5A"},
     },
-    description="深色底浅字图纸，护眼/省墨",
+    description="深色底浅字图纸，护眼/省墨（仅影响图纸，不影响成品效果图）",
 ), _dark_chart)

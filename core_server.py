@@ -22,6 +22,39 @@ from core.processor import ImageProcessor, OUTPUT_DIR
 from core.settings import load_queue, load_settings, save_queue, save_settings
 from core.version import APP_VERSION
 
+
+def _env_override_path(env_name, default):
+    """测试/CI 隔离用：路径环境变量优先（仅路径配置，无业务逻辑）。"""
+    value = os.environ.get(env_name)
+    return os.path.abspath(value) if value else default
+
+
+# 允许测试/CI 用环境变量把用户数据与中间产物重定向到临时目录；
+# 未设置时行为与原先完全一致（仓库内默认路径）。
+OUTPUT_DIR = _env_override_path("PERLER_OUTPUT_DIR", OUTPUT_DIR)
+
+import core.processor as _processor_module  # noqa: E402
+_processor_module.OUTPUT_DIR = OUTPUT_DIR
+
+import core.settings as _settings_module  # noqa: E402
+_settings_module.SETTINGS_FILE = _env_override_path(
+    "PERLER_SETTINGS_FILE", _settings_module.SETTINGS_FILE)
+_settings_module.QUEUE_FILE = _env_override_path(
+    "PERLER_QUEUE_FILE", _settings_module.QUEUE_FILE)
+_settings_module.SettingsStore.__init__.__defaults__ = (
+    _settings_module.SETTINGS_FILE, _settings_module.QUEUE_FILE)
+
+import core.history_manager as _history_module  # noqa: E402
+_history_module.HISTORY_FILE = _env_override_path(
+    "PERLER_HISTORY_FILE", _history_module.HISTORY_FILE)
+if os.environ.get("PERLER_HISTORY_FILE"):
+    _history_module.LEGACY_HISTORY_FILE = os.path.join(
+        os.path.dirname(_history_module.HISTORY_FILE), "legacy_history.json")
+
+import core.my_colors as _my_colors_module  # noqa: E402
+_my_colors_module.MY_COLORS_FILE = _env_override_path(
+    "PERLER_MY_COLORS_FILE", _my_colors_module.MY_COLORS_FILE)
+
 PROGRESS_THROTTLE = 0.02  # 每 2% 发一次进度事件
 
 _TRACK_KEY_RE = re.compile(r"^[\w-]{1,64}$")
@@ -97,7 +130,9 @@ def tempfile_dir():
     return tempfile.gettempdir()
 
 
-TRACK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "track")
+TRACK_DIR = _env_override_path(
+    "PERLER_TRACK_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "track"))
 
 # output/ 保留的最新产物文件数（generate/edit 中间产物会无限累积，需裁剪）
 MAX_OUTPUT_FILES = 50
@@ -344,6 +379,8 @@ class CoreServer:
             "grid_h": result.grid_h,
             "cell_size": result.cell_size,
             "palette": params.get("palette", "mard_221"),
+            # 非致命提示（chibi 无人脸/几何特效改写网格/参数被钳制/未知特效…）
+            "warnings": list(getattr(result, "warnings", []) or []),
         }
 
     def _edit(self, rid, params):
@@ -427,6 +464,7 @@ class CoreServer:
             "grid_w": result.grid_w,
             "grid_h": result.grid_h,
             "cell_size": result.cell_size,
+            "warnings": list(getattr(result, "warnings", []) or []),
         }
 
     def _track_load(self, params):

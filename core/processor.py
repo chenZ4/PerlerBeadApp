@@ -2,7 +2,7 @@
 import math
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -43,6 +43,8 @@ class GenerateResult:
     grid_w: int
     grid_h: int
     cell_size: int
+    # 非致命提示（协议层回传 warnings；UI 状态栏可见）
+    warnings: list = field(default_factory=list)
 
 
 class ImageProcessor:
@@ -151,6 +153,14 @@ class ImageProcessor:
                 # 模糊请求（非联动对）：保持文档语义「按原图比例（宽为基准）」
                 final_grid_w, final_grid_h = cand_w
 
+            # 几何特效（chibi/crop）可能改变画幅 → 告知调用方网格被改写
+            if effects and ctx is not None and (
+                    has_effect(effects, "chibi") or has_effect(effects, "crop")):
+                if (final_grid_w, final_grid_h) != (grid_w, grid_h):
+                    ctx.warnings.append(
+                        f"几何特效改变画幅：网格 {grid_w}×{grid_h} → "
+                        f"{final_grid_w}×{final_grid_h}")
+
             # BOX（面积平均）下采样：NEAREST 单像素采样在照片上噪声大
             small_img = img.resize((final_grid_w, final_grid_h), resample=Image.BOX)
 
@@ -177,11 +187,14 @@ class ImageProcessor:
                     for _e in effects:
                         if _e.get("id") == "dither":
                             dither_params = _e.get("params") or {}
-                    strength = dither_params.get("strength", 1.0)
-                    try:
-                        strength = float(strength)
-                    except (TypeError, ValueError):
-                        strength = 1.0
+                    # 复用注册表 schema 钳制（旧实现直接读原始值，strength=5 会绕
+                    # 过 schema max=1.5 把图抖成噪点）
+                    from core.effects.registry import coerce_params as _coerce
+                    _coerced, _changed = _coerce("dither", dither_params)
+                    strength = _coerced.get("strength", 1.0)
+                    if _changed and ctx is not None:
+                        ctx.warnings.append(
+                            f"抖动 strength 已按参数范围钳制到 {strength}（0~1.5）")
                     index_map = palette.closest_indices_dithered(map_img, strength)
                 else:
                     index_map = palette.closest_indices(map_img)
@@ -386,10 +399,12 @@ class ImageProcessor:
             return GenerateResult(
                 save_path=save_path, chart=final_img, finished=finished_img,
                 color_stats=color_stats, total_beads=total_beads,
-                grid_w=final_grid_w, grid_h=final_grid_h, cell_size=cell_size)
+                grid_w=final_grid_w, grid_h=final_grid_h, cell_size=cell_size,
+                warnings=list(ctx.warnings) if ctx is not None else [])
 
         except Exception as e:
-            print(f"[错误] 处理失败：{e}")
+            # 走 stderr：stdout 是 core_server 的 JSON 行协议通道，绝不能污染
+            print(f"[错误] 处理失败：{e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
             return None
