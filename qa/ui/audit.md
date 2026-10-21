@@ -548,3 +548,25 @@ func restoreUILayout() / persistUILayout()
 3. 实现规则引用 open-design 的 editorial typography hierarchy（3–5 倍字阶跳跃、留白承载层级、正文字高 1.6–1.7、display 负追踪只用于拉丁）与 Monocle 风格档的量化字距/线宽规则。
 
 **给用户的一句话**：杂志感不是“加上杂志的样子”，而是**版式纪律**——网格、字阶、留白、发丝线、单一强调色、图注编号。我们把它用在“让你看见成果”的地方（图版、特效画廊、空状态、导出），同时把工作台做得更快：生成键永远在、效果看得见、前后能对比。
+---
+
+## 14. T12 开始页改版记录（用户四轮反馈）
+
+- **反馈①「示例面板可以不要了，颜色特别特别不和谐」**：删除封面右侧 coverRail 整块（示例图版 + 彩色模板缩略图）；TemplateThumb 因仅被封面使用一并清理；模板入口只在工作台侧栏「模板」下拉保留。封面不再出现任何彩色缩略图。
+- **反馈②「老鹰的图做成一张背景大图在整个左侧」**：开始页改为「左整块背景大图 + 右文案/操作列」——
+  - 左：`EditorialAssets.heroPhotoToBeadsCover`（2400×1800 对角过渡）以 `.resizable().aspectRatio(contentMode: .fill).clipped()` 铺满整个左侧内容区（无边距、无边框、不是框住的小图）；底部深色 scrim（固定 #17120D 0.74 渐变，与主题无关，保证照片上文字可读）+ 左下奶油色图注（PLATE 00 / FROM PHOTOGRAPH TO BEAD / PHOTOGRAPH·BEADS 双列）；不遮鹰眼。
+  - 右：430pt 纸底列——eyebrow「BEGIN A NEW PLATE」、黄铜渐变标题「从一张照片，到 3,600 颗豆。」、standfirst、「选择图片 …」主 CTA + 拖入提示、快捷键 4 行 / 输出 3 行紧凑表、Fleuron + 本机处理说明；整列只用纸/墨/黄铜。
+- **布局/响应**：1280×800 无滚动、CTA 首屏可见；1440 宽时 hero 自然扩展、右列保持 430pt；亮暗双主题（右侧列纸底随主题，hero 图注/scrim 固定保证图片上可读）。
+- **截图**：qa/ui/after/real_empty_{light,dark}_{1280x800,1440x900}.png（1440 受屏幕可见高限制实际 1440×861）。
+- **门禁**：swift build 通过；swift test 112/112（含 Lead 的 AssetTests 2 项）。未改 Package/Resources/EditorialAssets/AssetTests；未 commit/push。
+
+
+---
+
+## 15. T13 P2 补修：封面固有最小宽度（右列压缩/右内边距裁切）
+
+- **view-verify T13 发现**：封面 hero 的 scaledToFill 理想宽（≈内容高×2400/1800≈910pt）参与 HStack 布局，1280×800 下整页最小宽 1290–1310pt → 右列被压到 400、30pt 右内边距被裁。
+- **修复**：`coverHero` 用铺底 Rectangle + `GeometryReader` 显式尺寸铺 `.resizable().scaledToFill().frame(geo.size).clipped()`（图片不再贡献理想宽度）；右列 `frame(minWidth: 400, idealWidth: 430, maxWidth: 430)`。
+- **逐像素实测（真 app 截图）**：1280×800 → 分隔线 849.0pt、右列 431pt、内容右内边距 **30.0pt**；1440×900 → 分隔线 1009.0pt、右列 431pt、右内边距 **30.0pt**；亮/暗一致性通过，无文字裁切、CTA 首屏可见。
+- **门禁**：swift build 通过；swift test **112/112**。未 commit/push；截图已更新 qa/ui/after/real_empty_{light,dark}_{1280x800,1440x900}.png。
+

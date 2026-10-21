@@ -18,6 +18,22 @@ struct ZoomProbeCLI {
                 let outDir = root + "/qa/verify/evidence"
                 try ensureDir(outDir)
                 plog("SETUP start phase=\(phase) root=\(root)")
+                if phase == "layouttest" {
+                    let layout = try LayoutProbe.run(repoRoot: root, outDir: outDir)
+                    try writeJSON(["phase": phase, "layout": layout],
+                                  to: outDir + "/layout_probe.json")
+                    print("PROBE DONE phase=layouttest")
+                    fflush(stdout)
+                    exit(0)
+                }
+                if phase == "cover" {
+                    let cover = try CoverProbe.run(repoRoot: root, outDir: outDir)
+                    try writeJSON(["phase": phase, "cover": cover],
+                                  to: outDir + "/cover_probe.json")
+                    print("PROBE DONE phase=cover")
+                    fflush(stdout)
+                    exit(0)
+                }
                 if phase == "anchor" {
                     let session = ProbeSession(repoRoot: root, outDir: outDir, phase: phase)
                     try session.setUp()

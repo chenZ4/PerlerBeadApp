@@ -107,3 +107,16 @@ cd /path/to/PerlerBeadApp && PERLER_REPO_ROOT=$PWD TMPDIR=$PWD/qa/ui/tmp \
 9. 拖拽极限（连续极端拖拽后仍在版心内）
 
 发现问题时把「操作 + 现象 + 截图」发 view-verify（同一 harness 可定位）。
+## 9. T12 开始页改版：删除示例面板 + 左侧整块背景大图 hero（用户四轮反馈）
+
+- **删除**：封面右侧「示例图版 / 内置模板」整块（coverRail + 彩色模板缩略图）；TemplateThumb 一并清理（只被封面使用）。模板入口保留在工作台侧栏「模板」下拉中。
+- **新版开始页**：左 = `EditorialAssets.heroPhotoToBeadsCover`（2400×1800，4:3 对角过渡）`.resizable().aspectRatio(contentMode: .fill).clipped()` 铺满整个左侧内容区（无边距/无框住小图）；底部深色 scrim + 左下奶油色图注（PLATE 00 · FROM PHOTOGRAPH TO BEAD；PHOTOGRAPH / BEADS 双列微说明），不遮鹰眼主体。右 = 430pt 纸底操作列：eyebrow、黄铜渐变标题「从一张照片，到 3,600 颗豆。」、standfirst、「选择图片 …」主 CTA + 拖入提示、快捷键 4 行 / 输出 3 行紧凑表、本机处理说明。
+- **整页只剩纸/墨/黄铜**：无任何彩色缩略图；亮暗双主题；1280×800 不滚动、CTA 首屏可见；1440 宽 hero 自然扩展（右列固定 430）。
+- 截图（已更新）：real_empty_{light,dark}_1280x800.png、real_empty_{light,dark}_1440x900.png。
+- 未改 Package.swift / Resources / EditorialAssets / AssetTests；swift build 通过；swift test **112/112**；未 commit/push。
+## 10. T13 P2 补修：封面固有最小宽度导致右列被压缩/右内边距被裁
+
+- **问题（view-verify T13）**：hero 的 `.aspectRatio(contentMode: .fill)` 让图片理想宽 ≈ 内容高×4/3（≈910pt），+ 右列 430 → 整页固有最小宽 ≈1290–1310pt；1280×800 下右列被压到 400、设计 30pt 右内边距被裁到 0–18.5pt。
+- **修复**：hero 不参与 HStack 理想宽度计算——铺底 `Rectangle` + `GeometryReader` 内 `.resizable().scaledToFill().frame(geo.size).clipped()`；右列 `frame(minWidth: 400, idealWidth: 430, maxWidth: 430)`。
+- **实测（截图逐像素测量）**：1280×800 分隔线 849.0pt / 右列 431pt / 内容右内边距 **30.0pt**；1440 分隔线 1009.0pt / 右列 431pt / 右内边距 **30.0pt**；亮/暗一致，无裁切。
+- 构建通过；swift test **112/112**；未 commit/push。

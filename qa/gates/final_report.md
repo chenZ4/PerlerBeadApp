@@ -11,10 +11,56 @@
 
 ---
 
+# 2.5.1 封面改版最终门禁复测（T12/T13/T14，2026-10-21 23:52–23:58）
+
+> 本节是最新门禁终态（由 T14 执行）；下方 2.5.0 / T7 段落保留为历史对照。
+> 证据归档：2.5.1 -> qa/gates/logs/final/；2.5.0 -> qa/gates/logs/final_2.5.0/；T7/2.2.0 -> qa/gates/logs/final_2.2.0/。
+
+## A. 背景
+
+- **T12 开始页改版**：去掉示例面板，左侧改为整块全幅背景大图 hero（照片→拼豆封面）；旧横向 hero 资产、旧 heroPhotoToBeads API 与旧 AssetTests 用例已删除（Lead 删除旧资产），改用 Resources/hero_photo_to_beads_cover.jpg + EditorialAssets.heroPhotoToBeadsCover。
+- **P2 布局修复**：右列 30pt 内边距、分隔线 849/1009；T13 view-verify 独立验证 7/7 PASS（qa/verify/cover_redesign_report.md §9.1）。
+- 门禁时 HEAD = 7bda68f，工作区含 2.5.1 未提交改动（ContentView 23:49:50 / EditorialAssets 23:49:53 / AssetTests 23:50:01）；**门禁期间源码与测试无写入**，测的即最终态。core/version.py 工作区 APP_VERSION = 2.5.1。
+- 本轮为只读门禁复测：未改源码/测试，未 git commit/push。
+
+## B. 最终门禁终态（严格顺序、无并发门禁套件）
+
+| # | 步骤 | 命令 | 耗时 | 退出码 | 通过 | 失败 | 用户数据副作用 | 日志 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | run_tests | conda run -n pindou python tests/run_tests.py | 81.1s | 0 | **249** | **0** | **0** | qa/gates/logs/final/run_tests.log |
+| 2 | gui_smoke | conda run -n pindou python tests/gui_smoke.py | 23.7s | 0 | **92** | **0** | **0** | qa/gates/logs/final/gui_smoke.log |
+| 3 | stress_protocol | conda run -n pindou python tests/stress_protocol.py | 100.9s | 0 | **12** | **0** | **0** | qa/gates/logs/final/stress_protocol.log |
+| 4 | swift test（PERLER_* env 注入） | cd app && swift test --disable-sandbox | 57.4s | 0 | **111** | **0** | **0** | qa/gates/logs/final/swift_test_isolated.log |
+| 5 | swift build | cd app && swift build --disable-sandbox | 1.8s | 0 | — | — | **0** | qa/gates/logs/final/swift_build.log |
+| — | **合计** | — | **≈265s** | — | **464** | **0** | **0** | qa/gates/logs/final/isolation_diff.json |
+
+- **精确数字：249 + 92 + 12 + 111 = 464 / 0**，与 Lead GO 预期一致。T14 任务标题预测 112/465 来自中间态（封面测试加入后、旧 AssetTests 未删前）；按 Lead 最终删除旧 AssetTests 用例后 swift = 111 → 464。
+- swift 111 明细：既有 84 + ZoomPanTests 11 + VerifyZoomPanTests 15 + AssetTests 1（testCoverHeroAssetLoads 替换旧 testHeroAssetLoads，净 0）。
+- 用户数据隔离：5 个步骤对 track/、根 history.json/queue_state.json/app_settings.json/my_colors.json、output/、data/ 的前后 sha256 全部一致（side_effects_total = 0）；根 json mtime 保持 2026-10-21 22:11:03 不变。
+- 失败 0、flaky 0。说明：本轮 run_tests/stress 耗时偏长（81.1s/100.9s，平时约 69s），系 ui-audit/view-verify 的 harness/swift build 并行占用系统资源所致（Python 套件本身全绿）；**swift test/build 步骤在确认无并发 swift 进程后独占执行**，结果不受影响。
+
+## C. 测试数变化（2.5.0 → 2.5.1：464 不变）
+
+| 套件 | 2.5.0 | 2.5.1 | 变化 |
+|---|---|---|---|
+| run_tests | 249 | 249 | 0 |
+| gui_smoke | 92 | 92 | 0 |
+| stress_protocol | 12 | 12 | 0 |
+| swift test | 111 | 111 | 0（封面 hero 新增 1 项测试，同时删除旧 hero AssetTests 1 项） |
+| **合计** | **464** | **464** | **0** |
+
+## D. 状态与遗留
+
+- 当前工作区（门禁后）：2.5.1 改动未提交（ContentView / EditorialAssets / AssetTests / 新 Resources，旧 hero_photo_to_beads.jpg 已 staged 删除；core/version.py = 2.5.1）；HEAD 仍为 7bda68f。提交由 Lead 執行，本门禁未 commit/push。
+- 沿用 T7/T11 遗留风险：① bare swift test 需 CI 注入 PERLER_* env（否则 prune output，但不删用户 track 键，T7 已审计）；② stress S5 在 ps 不可用时内存断言恒真；③ DSH 沙箱下 swift test/build 需 --disable-sandbox；④ UI 外观仍以 T13 独立验证 + qa/ui/after 截图人工验收为主（无审美快照断言）。
+- 本轮未再跑 bare swift 残留审计（T7 已确认机制未变）。
+
+---
+
 # 2.5.0 二轮改造最终门禁复测（T8/T9/T10/T11，2026-10-21 23:23–23:28）
 
 > 本节是最新门禁终态（由 T11 执行）；下方 T7/2.2.0 段落保留为历史对照。
-> 注意：2.2.0（T7）的证据目录已归档到 qa/gates/logs/final_2.2.0/；qa/gates/logs/final/ 现在保存 2.5.0 证据。
+> 注意：2.2.0（T7）证据归档 qa/gates/logs/final_2.2.0/，2.5.0（T11）证据归档 qa/gates/logs/final_2.5.0/；qa/gates/logs/final/ 保存 2.5.1（T14）证据。
 
 ## A. 背景
 
