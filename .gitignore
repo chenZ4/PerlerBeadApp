@@ -377,3 +377,17 @@ app/.swiftpm/
 dist/
 app/*.xcodeproj
 app/.derivedData/
+
+# QA 审计产物：报告/证据索引/mockup 入库；原始大图、临时构建与中间产物不入库
+qa/lead/
+qa/effects/artifacts/
+qa/effects/inputs/
+qa/effects/tmp_*/
+qa/effects/__pycache__/
+qa/research/__pycache__/
+qa/ui/assets/
+qa/ui/shots/
+qa/ui/tmp/
+qa/ui/render/
+qa/**/__pycache__/
+

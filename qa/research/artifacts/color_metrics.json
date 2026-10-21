@@ -1,0 +1,59 @@
+{
+  "grid": 64,
+  "cel": {
+    "current": {
+      "method": "current_cel_posterize4_cie76",
+      "unique_beads": 43,
+      "speckle_ratio": 0.2129,
+      "outlier_ratio_dE2000_gt10": 0.4326,
+      "median_dE2000_to_block_mean": 8.68
+    },
+    "proposed": {
+      "method": "proposed_stylization_covdown_labkmeans_ciede2000",
+      "unique_beads": 8,
+      "speckle_ratio": 0.0933,
+      "outlier_ratio_dE2000_gt10": 0.2285,
+      "median_dE2000_to_block_mean": 5.41
+    }
+  },
+  "palette_distance": {
+    "cie76_vs_ciede2000_index_diff_pct": 21.41,
+    "cie76_vs_oklab_index_diff_pct": 42.43,
+    "median_ciede2000_to_block_mean": {
+      "cie76": 3.99,
+      "ciede2000": 3.74,
+      "oklab": 4.49
+    }
+  },
+  "bg_remove": {
+    "case_A_white_subject_on_light_gray": {
+      "current_global_tolerance30": {
+        "subject_retention": 0.03,
+        "bg_removal": 1.0
+      },
+      "border_connected_dE1.8": {
+        "subject_retention": 1.0,
+        "bg_removal": 0.0
+      },
+      "grabcut_rect_init": {
+        "subject_retention": 1.0,
+        "bg_removal": 1.0
+      }
+    },
+    "case_B_white_bg_with_enclosed_white_subject_interior": {
+      "current_global_tolerance30": {
+        "subject_retention": 0.0,
+        "bg_removal": 0.867
+      },
+      "border_connected_dE1.8": {
+        "subject_retention": 1.0,
+        "bg_removal": 0.867
+      }
+    }
+  },
+  "params": {
+    "abstraction": "cv2.stylization sigma_s=60 sigma_r=0.35",
+    "kmeans_k": 8,
+    "bg_dE_threshold": 1.8
+  }
+}

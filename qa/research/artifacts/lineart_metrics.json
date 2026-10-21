@@ -1,0 +1,98 @@
+{
+  "grid": 64,
+  "source": "qa/lead/inputs/eagle.png",
+  "results": [
+    {
+      "method": "current_FIND_EDGES_threshold40",
+      "coverage_cells": 282,
+      "coverage_pct": 6.88,
+      "components": 131,
+      "largest_component": 16,
+      "largest_share_of_mask": 0.057,
+      "isolated_cells": 223,
+      "isolated_share_of_mask": 0.791,
+      "mean_component_size": 2.15
+    },
+    {
+      "method": "current_neighbor_diff_outline",
+      "coverage_cells": 2348,
+      "coverage_pct": 57.32,
+      "components": 3,
+      "largest_component": 2310,
+      "largest_share_of_mask": 0.984,
+      "isolated_cells": 42,
+      "isolated_share_of_mask": 0.018,
+      "mean_component_size": 782.67
+    },
+    {
+      "method": "dog_grid_hysteresis",
+      "coverage_cells": 780,
+      "coverage_pct": 19.04,
+      "components": 10,
+      "largest_component": 511,
+      "largest_share_of_mask": 0.655,
+      "isolated_cells": 79,
+      "isolated_share_of_mask": 0.101,
+      "mean_component_size": 78.0
+    },
+    {
+      "method": "dog_grid_despeckle_thin",
+      "coverage_cells": 354,
+      "coverage_pct": 8.64,
+      "components": 7,
+      "largest_component": 239,
+      "largest_share_of_mask": 0.675,
+      "isolated_cells": 51,
+      "isolated_share_of_mask": 0.144,
+      "mean_component_size": 50.57
+    },
+    {
+      "method": "dog_fullres_strict_covdown",
+      "coverage_cells": 689,
+      "coverage_pct": 16.82,
+      "components": 22,
+      "largest_component": 540,
+      "largest_share_of_mask": 0.784,
+      "isolated_cells": 64,
+      "isolated_share_of_mask": 0.093,
+      "mean_component_size": 31.32
+    },
+    {
+      "method": "xdog_fullres_covdown_12pct",
+      "coverage_cells": 4096,
+      "coverage_pct": 100.0,
+      "components": 1,
+      "largest_component": 4096,
+      "largest_share_of_mask": 1.0,
+      "isolated_cells": 0,
+      "isolated_share_of_mask": 0.0,
+      "mean_component_size": 4096.0
+    },
+    {
+      "method": "neighbor_diff_deltaE_gate_p88",
+      "coverage_cells": 377,
+      "coverage_pct": 9.2,
+      "components": 18,
+      "largest_component": 93,
+      "largest_share_of_mask": 0.247,
+      "isolated_cells": 33,
+      "isolated_share_of_mask": 0.088,
+      "mean_component_size": 20.94
+    }
+  ],
+  "dog_thresholds": {
+    "hi": 0.10979,
+    "lo": 0.06435
+  },
+  "params": {
+    "dog_sigma": [
+      0.8,
+      1.6
+    ],
+    "xdog_tau_eps_phi": [
+      0.98,
+      0.1,
+      200.0
+    ]
+  }
+}

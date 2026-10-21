@@ -1,0 +1,157 @@
+{
+  "task": "task-3",
+  "executor": "gate-verify",
+  "run_date_local": "2026-10-21",
+  "workspace": "/Users/chen/Desktop/learn/PerlerBeadApp",
+  "git_head_clean_before": true,
+  "notes": [
+    "第一次尝试用 background job 启动 run_tests 时被 harness 回收（无 meta），随后从头严格串行重跑；下表为 21:42:32 起的权威顺序执行。",
+    "run_tests.py 额外重跑一次以验证 flaky（含 canary），两次均 230/0。",
+    "全部套件不并发；其他 teammate 的引擎探针使用 save=False/qa 临时目录。"
+  ],
+  "suites": [
+    {
+      "name": "tests/run_tests.py",
+      "command": "conda run -n pindou python tests/run_tests.py",
+      "start": "2026-10-21T21:42:32+0800",
+      "end": "2026-10-21T21:43:39+0800",
+      "elapsed_s": 67,
+      "exit_code": 0,
+      "passed": 230,
+      "failed": 0,
+      "log": "qa/gates/logs/run_tests.log",
+      "rerun": {
+        "start": "2026-10-21T21:49:16+0800",
+        "elapsed_s": 69,
+        "exit_code": 0,
+        "passed": 230,
+        "failed": 0,
+        "log": "qa/gates/logs/run_tests_rerun.log"
+      }
+    },
+    {
+      "name": "tests/gui_smoke.py",
+      "command": "conda run -n pindou python tests/gui_smoke.py",
+      "start": "2026-10-21T21:43:52+0800",
+      "end": "2026-10-21T21:44:13+0800",
+      "elapsed_s": 21,
+      "exit_code": 0,
+      "passed": 92,
+      "failed": 0,
+      "log": "qa/gates/logs/gui_smoke.log"
+    },
+    {
+      "name": "tests/stress_protocol.py",
+      "command": "conda run -n pindou python tests/stress_protocol.py",
+      "start": "2026-10-21T21:44:15+0800",
+      "end": "2026-10-21T21:45:29+0800",
+      "elapsed_s": 74,
+      "exit_code": 0,
+      "passed": 12,
+      "failed": 0,
+      "log": "qa/gates/logs/stress_protocol.log"
+    },
+    {
+      "name": "swift test (app/)",
+      "command": "cd app && swift test --disable-sandbox",
+      "canonical_start": "2026-10-21T21:45:41+0800",
+      "canonical_end": "2026-10-21T21:46:34+0800",
+      "elapsed_s": 53,
+      "exit_code": 0,
+      "passed": 78,
+      "failed": 0,
+      "log": "qa/gates/logs/swift_test.log",
+      "raw_command": "cd app && swift test",
+      "raw_exit_code": 1,
+      "raw_elapsed_s": 1,
+      "raw_failure_root_cause": "DSH workspace-write 沙箱下 SwiftPM 的 sandbox-exec 报 'sandbox_apply: Operation not permitted'，且 ~/Library/org.swift.swiftpm 不可写；属执行环境限制，非产品/测试缺陷。",
+      "raw_log": "qa/gates/logs/swift_test_rawcmd_failure.log"
+    }
+  ],
+  "totals": {
+    "passed": 412,
+    "failed": 0,
+    "test_report_claim": "412 (230+92+12+78)",
+    "claim_reproduced": true,
+    "wall_clock_sequential_s": 215
+  },
+  "xcuitest": {
+    "in_gate": false,
+    "reason": "SPM Package.swift 只含 PerlerAppTests；XCUITest 需要 xcodegen 生成 PerlerApp.xcodeproj + xcodebuild；CI 中 ui-tests-macos 为 continue-on-error 观察项。412=230+92+12+78 不含 UI 测试。",
+    "test_function_count_in_file": 6,
+    "test_report_claims": [
+      "2.2.1: 已本地验证 3/3 全绿 (L187-188)",
+      "2.2.2: XCUITest 4 项 (+U4) (L234)",
+      "2.3.0: XCUITest (U4-U7) 见下方补记 (L306) —— 报告内不存在该补记，U5-U7 无记录结果"
+    ],
+    "executed_by_this_audit": false
+  },
+  "effects_gate_effectiveness": {
+    "engine_effect_count": 15,
+    "run_tests_expected_ids_asserted": 8,
+    "run_tests_effect_assertions_total": 23,
+    "run_tests_effect_assertions_non_null_only": 10,
+    "discrimination_probe": {
+      "file": "qa/gates/probes/test_discrimination_probe.py",
+      "log": "qa/gates/logs/probe_test_discrimination.log",
+      "cases": 17,
+      "cases_vacuous_under_noop": 8,
+      "effects_fully_vacuous": ["cel_shade", "chibi", "crop", "duotone", "mirror", "neon", "outline_edge"],
+      "effects_with_zero_pixel_change_on_gate_fixture": ["crop", "chibi", "mirror", "outline_edge"],
+      "note": "vacuous = 把 handler 换成原样返回(no-op)后现有断言仍通过；说明这些门禁断言无法发现'特效没生效'。"
+    },
+    "golden_matrix_effect_coverage": {
+      "entries": 8,
+      "effects_hashed": ["grayscale", "max_colors", "outline_cell", "dark_chart"],
+      "effect_count_without_golden_anchor": 11,
+      "dither": "仅结构断言(守恒/色域/与无抖动不同)，不进字节哈希"
+    },
+    "swift_effects_exposure_tests": {
+      "file": "app/Tests/PerlerAppTests/EffectsExposureTests.swift",
+      "count": 5,
+      "scope": "15 项装配 / 参数携带 / 全开生成成功 / 2 项 WYSIWYG 联动",
+      "asserts_preview_auto_update_on_toggle": false,
+      "asserts_visual_outcome": false
+    },
+    "ui_visual_tests": {
+      "swift_unit_tests": 78,
+      "xcuitest_functions": 6,
+      "appearance_or_snapshot_assertions": 0,
+      "tk_smoke_layoutish_assertions": 1,
+      "note": "gui_smoke 唯一与外观相关的是色卡右侧白屏间隙<30px(L356-360)；其余为功能几何/状态断言。Tk 版无特效面板(ARCHITECTURE L183)。"
+    }
+  },
+  "isolation_findings": {
+    "track_dir_wiped_by_run_tests": {
+      "code": ["tests/run_tests.py:697-699", "tests/run_tests.py:1132-1134"],
+      "impact": "shutil.rmtree(<repo>/track) 删除全部进度持久化文件（track/<stableKey(image_path)>.json，AppViewModel.swift:614-626），用户已有进度丢失。",
+      "evidence": "pre-run 21:42 观察 track/ 有 13 个文件；权威 run_tests 后 track/ 消失；本次全部套件后再跑 run_tests 仍删除。"
+    },
+    "root_app_settings_json_written_by_run_tests": {
+      "code": "tests/run_tests.py:635-638 经 core_server settings_set 写默认 SETTINGS_FILE（core/settings.py:14 = 仓库根）",
+      "evidence": "权威 run_tests 后 app_settings.json 出现（内容为测试值）；后一次 rerun 后仍存在（见 post_run_snapshot.txt）。"
+    },
+    "root_queue_state_and_settings_deleted_by_gui_smoke": {
+      "code": ["tests/gui_smoke.py:302-303", "tests/gui_smoke.py:325-326", "tests/gui_smoke.py:376-377"],
+      "impact": "无条件删除真实仓库根 queue_state.json / app_settings.json（用户队列与设置持久化数据）。",
+      "context": "docs/ARCHITECTURE.md:165-166 明确约定不得污染仓库根 history.json/app_settings.json/queue_state.json。"
+    },
+    "history_json_is_isolated_properly": "tests/run_tests.py:218-226,300-304 备份/恢复 HISTORY_FILE；gui_smoke.py:38-40 重定向 HISTORY_FILE。",
+    "swift_tests_write_repo_track": ["app/Tests/PerlerAppTests/EngineTests.swift:218 (key=test)", "app/Tests/PerlerAppTests/InteractionRaceTests.swift:109 (key=echo_test_key)", "其余 hash key 来自 VM 测试"],
+    "output_dir": "50/50 旧文件被 prune 替换为 51 个新文件（gitignore: output/），与任务说明一致，但不是无副作用。",
+    "clipboard": "tests/gui_smoke.py:629 写系统剪贴板（轻微系统状态副作用）。",
+    "ps_denied_under_sandbox": {
+      "code": "tests/stress_protocol.py:237-244 rss_kb()",
+      "effect": "ps 不可用 -> 异常被吞 -> rss=0 -> early=late=0 -> 'growth<120MB' 恒真；S5 内存断言在本环境零区分力。",
+      "probe": "qa/gates/probes/stress_s5_ps_probe.py",
+      "log": "qa/gates/logs/probe_stress_s5_ps.log"
+    },
+    "ci_gate_scope": {
+      "run_tests": "CI python-tests（macOS+Windows）",
+      "gui_smoke": "仅 Windows gui-smoke-windows（continue-on-error 观察）",
+      "stress_protocol": "未纳入 CI",
+      "swift_test": "CI swift-tests（无 opencv）",
+      "xcuitest": "CI ui-tests-macos（continue-on-error 观察）"
+    }
+  }
+}

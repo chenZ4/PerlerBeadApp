@@ -1,0 +1,158 @@
+{
+ "outline_cell": {
+  "photo_eagle": {
+   "outline_share_after": 0.2733,
+   "outline_share_baseline": 0.1558,
+   "mean_l_after": 32.72,
+   "mean_l_baseline": 37.65,
+   "n_colors": 48,
+   "warnings": []
+  },
+  "photo_sky": {
+   "outline_share_after": 0.1333,
+   "outline_share_baseline": 0.0325,
+   "mean_l_after": 48.24,
+   "mean_l_baseline": 52.0,
+   "n_colors": 35,
+   "warnings": []
+  },
+  "cartoon_cat": {
+   "outline_share_after": 0.1542,
+   "outline_share_baseline": 0.0042,
+   "mean_l_after": 78.58,
+   "mean_l_baseline": 85.36,
+   "n_colors": 29,
+   "warnings": []
+  }
+ },
+ "outline_edge": {
+  "photo_eagle": {
+   "changed": 421,
+   "changed_ratio": 0.1169,
+   "mean_neighbors": 2.36,
+   "ratio_ge2": 0.8551,
+   "outline_share": 0.2728,
+   "warnings": []
+  },
+  "cartoon_cat": {
+   "changed": 595,
+   "changed_ratio": 0.1653,
+   "mean_neighbors": 2.55,
+   "ratio_ge2": 0.879,
+   "outline_share": 0.1694,
+   "warnings": []
+  }
+ },
+ "cel_shade": {
+  "photo_eagle": {
+   "mean_l_after": 36.39,
+   "mean_l_baseline": 37.65,
+   "n_colors": 30,
+   "n_colors_baseline": 52,
+   "changed_ratio_de10": 0.2622,
+   "median_hue_shift_changed": 69.1,
+   "warnings": []
+  },
+  "photo_sky": {
+   "mean_l_after": 50.89,
+   "mean_l_baseline": 52.0,
+   "n_colors": 17,
+   "n_colors_baseline": 35,
+   "changed_ratio_de10": 0.4858,
+   "median_hue_shift_changed": 31.4,
+   "warnings": []
+  },
+  "cartoon_cat": {
+   "mean_l_after": 85.07,
+   "mean_l_baseline": 85.36,
+   "n_colors": 38,
+   "n_colors_baseline": 38,
+   "changed_ratio_de10": 0.0336,
+   "median_hue_shift_changed": 11.6,
+   "warnings": []
+  }
+ },
+ "preset": {
+  "photo_eagle": {
+   "n_colors": 5,
+   "mean_l_baseline": 37.65,
+   "mean_l_after": 43.66,
+   "near_white_baseline": 0.0617,
+   "near_white_after": 0.0,
+   "warnings": []
+  },
+  "photo_sky": {
+   "n_colors": 6,
+   "mean_l_baseline": 52.0,
+   "mean_l_after": 55.0,
+   "near_white_baseline": 0.0,
+   "near_white_after": 0.0,
+   "warnings": []
+  },
+  "cartoon_cat": {
+   "n_colors": 4,
+   "mean_l_baseline": 85.36,
+   "mean_l_after": 81.42,
+   "near_white_baseline": 0.6356,
+   "near_white_after": 0.6242,
+   "warnings": []
+  }
+ },
+ "bg_remove": {
+  "ghost": {
+   "deleted_subject_ratio": 0.0,
+   "deleted_bg_ratio": 0.0,
+   "warnings": [
+    "bg_remove: 目标色未出现在图像边界，已跳过（避免误删内部白色主体）"
+   ]
+  },
+  "cartoon_white_bg": {
+   "beads": 1266,
+   "transparent_cells": 2334,
+   "warnings": []
+  },
+  "cartoon_auto": {
+   "beads": 1266,
+   "warnings": []
+  }
+ },
+ "transparent_alpha": {
+  "baseline_beads": 918,
+  "rows": {
+   "grayscale": {
+    "beads": 918,
+    "warnings": []
+   },
+   "cel_shade": {
+    "beads": 918,
+    "warnings": []
+   },
+   "duotone": {
+    "beads": 918,
+    "warnings": []
+   },
+   "adjust": {
+    "beads": 918,
+    "warnings": []
+   }
+  }
+ },
+ "chibi": {
+  "grid": [
+   60,
+   60
+  ],
+  "warnings": [
+   "大头(Q版)：未检测到人脸，已跳过（正面人像效果最佳）"
+  ],
+  "beads": 3600
+ },
+ "dither_clamp": {
+  "identical_after_clamp": true,
+  "warnings": [
+   "抖动 strength 已按参数范围钳制到 1.5（0~1.5）"
+  ],
+  "n_colors_s15": 69,
+  "n_colors_s5": 69
+ }
+}
